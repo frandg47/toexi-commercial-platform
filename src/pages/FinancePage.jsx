@@ -257,7 +257,6 @@ export default function FinancePage() {
 
   const loadMonthlyNetIncome = useCallback(async () => {
     setMonthlyNetIncomeLoading(true);
-    // Obtener todas las ventas con sus items del año seleccionado
     const yearStart = new Date(`${selectedYear}-01-01`)
       .toISOString()
       .split("T")[0];
@@ -318,8 +317,66 @@ export default function FinancePage() {
       return;
     }
 
-    // Calcular ingresos netos por mes
-    // El costo se toma de sale_items.cost_price_usd (guardado al momento de la venta)
+    // Obtener el ingreso real acreditado desde account_movements
+    const saleIds = (salesData || []).map((s) => s.id);
+    const saleAccreditedIncome = {};
+
+    if (saleIds.length > 0) {
+      const { data: paymentsData } = await supabase
+        .from("sale_payments")
+        .select("id, sale_id")
+        .in("sale_id", saleIds);
+
+      const paymentIds = (paymentsData || []).map((p) => p.id);
+
+      if (paymentIds.length > 0) {
+        const { data: incomeMovements } = await supabase
+          .from("account_movements")
+          .select(
+            "amount, currency, related_id, accreditation_status, available_on",
+          )
+          .eq("type", "income")
+          .in("related_table", ["sale_payments", "sale_payment_history"])
+          .in("related_id", paymentIds);
+
+        const paymentToSale = new Map(
+          (paymentsData || []).map((p) => [p.id, p.sale_id]),
+        );
+        const today = todayDateKey();
+
+        for (const m of incomeMovements || []) {
+          if (
+            m.accreditation_status === "pending" &&
+            m.available_on &&
+            m.available_on > today
+          )
+            continue;
+
+          const saleId = paymentToSale.get(m.related_id);
+          if (!saleId) continue;
+
+          const amount = Number(m.amount || 0);
+          if (!amount) continue;
+
+          let amountUsd = null;
+          if (m.currency === "USD") {
+            amountUsd = amount;
+          } else if (m.currency === "USDT") {
+            if (usdtRate && fxRate) amountUsd = (amount * usdtRate) / fxRate;
+            else amountUsd = amount;
+          } else if (m.currency === "ARS") {
+            if (fxRate) amountUsd = amount / fxRate;
+          }
+
+          if (amountUsd === null) continue;
+
+          saleAccreditedIncome[saleId] =
+            (saleAccreditedIncome[saleId] || 0) + amountUsd;
+        }
+      }
+    }
+
+    // Calcular ingresos netos por mes usando el ingreso real acreditado
     const monthlyData = {};
 
     (salesData || []).forEach((sale) => {
@@ -339,7 +396,9 @@ export default function FinancePage() {
         };
       }
 
-      monthlyData[monthKey].totalSales += Number(sale.total_usd || 0);
+      const income =
+        saleAccreditedIncome[sale.id] ?? Number(sale.total_usd || 0);
+      monthlyData[monthKey].totalSales += income;
 
       sale.sale_items?.forEach((item) => {
         const quantity = Number(item.quantity || 0);
@@ -350,20 +409,18 @@ export default function FinancePage() {
       monthlyData[monthKey].salesCount += 1;
     });
 
-    // Calcular el ingreso neto para cada mes
     Object.keys(monthlyData).forEach((key) => {
       monthlyData[key].netIncome =
         monthlyData[key].totalSales - monthlyData[key].totalCost;
     });
 
-    // Convertir a array y ordenar por mes descendente
     const sortedData = Object.values(monthlyData).sort((a, b) => {
       return b.month.localeCompare(a.month);
     });
 
     setMonthlyNetIncome(sortedData);
     setMonthlyNetIncomeLoading(false);
-  }, [selectedSalesChannels, selectedYear]);
+  }, [selectedSalesChannels, selectedYear, fxRate, usdtRate]);
 
   const loadMonthDetail = useCallback(async (monthKey) => {
     setDetailLoading(true);
@@ -374,7 +431,7 @@ export default function FinancePage() {
     const lastDay = new Date(Number(year), Number(month), 0).getDate();
     const monthEnd = `${year}-${paddedMonth}-${String(lastDay).padStart(2, "0")}`;
 
-    const { data, error } = await supabase
+    const { data: salesData, error } = await supabase
       .from("sales")
       .select(`id,sale_date,total_usd,fx_rate_used,sales_channels(name),sale_items(product_name,variant_name,quantity,usd_price,cost_price_usd,subtotal_usd)`)
       .eq("status", "vendido")
@@ -392,10 +449,74 @@ export default function FinancePage() {
       return;
     }
 
-    setDetailSales(data || []);
+    const saleIds = (salesData || []).map((s) => s.id);
+    const saleAccreditedIncome = {};
+
+    if (saleIds.length > 0) {
+      const { data: paymentsData } = await supabase
+        .from("sale_payments")
+        .select("id, sale_id")
+        .in("sale_id", saleIds);
+
+      const paymentIds = (paymentsData || []).map((p) => p.id);
+
+      if (paymentIds.length > 0) {
+        const { data: incomeMovements } = await supabase
+          .from("account_movements")
+          .select(
+            "amount, currency, related_id, accreditation_status, available_on",
+          )
+          .eq("type", "income")
+          .in("related_table", ["sale_payments", "sale_payment_history"])
+          .in("related_id", paymentIds);
+
+        const paymentToSale = new Map(
+          (paymentsData || []).map((p) => [p.id, p.sale_id]),
+        );
+        const today = todayDateKey();
+
+        for (const m of incomeMovements || []) {
+          if (
+            m.accreditation_status === "pending" &&
+            m.available_on &&
+            m.available_on > today
+          )
+            continue;
+
+          const saleId = paymentToSale.get(m.related_id);
+          if (!saleId) continue;
+
+          const amount = Number(m.amount || 0);
+          if (!amount) continue;
+
+          let amountUsd = null;
+          if (m.currency === "USD") {
+            amountUsd = amount;
+          } else if (m.currency === "USDT") {
+            if (usdtRate && fxRate) amountUsd = (amount * usdtRate) / fxRate;
+            else amountUsd = amount;
+          } else if (m.currency === "ARS") {
+            if (fxRate) amountUsd = amount / fxRate;
+          }
+
+          if (amountUsd === null) continue;
+
+          saleAccreditedIncome[saleId] =
+            (saleAccreditedIncome[saleId] || 0) + amountUsd;
+        }
+      }
+    }
+
+    const enrichedSales = (salesData || []).map((sale) => ({
+      ...sale,
+      accredited_total_usd:
+        saleAccreditedIncome[sale.id] ?? Number(sale.total_usd || 0),
+    }));
+
+    setDetailSales(enrichedSales);
     setDetailLoading(false);
     setDetailDialogOpen(true);
-  }, []);
+  }, [fxRate, usdtRate]);
 
   const toggleSalesChannelFilter = (channelId) => {
     setSelectedSalesChannels((current) =>
@@ -455,8 +576,11 @@ export default function FinancePage() {
 
   useEffect(() => {
     loadStaticData();
+  }, [loadStaticData]);
+
+  useEffect(() => {
     loadMonthlyNetIncome();
-  }, [loadStaticData, loadMonthlyNetIncome]);
+  }, [loadMonthlyNetIncome]);
 
   useEffect(() => {
     loadFilteredBalances();
@@ -1041,7 +1165,9 @@ export default function FinancePage() {
                         (sum, it) => sum + Number(it.quantity || 0),
                         0,
                       );
-                      const totalSale = Number(sale.total_usd || 0);
+                      const totalSale = Number(
+                        sale.accredited_total_usd ?? sale.total_usd ?? 0,
+                      );
                       const totalCost = items.reduce(
                         (sum, it) =>
                           sum +
