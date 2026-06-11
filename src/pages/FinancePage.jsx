@@ -431,14 +431,36 @@ export default function FinancePage() {
     const lastDay = new Date(Number(year), Number(month), 0).getDate();
     const monthEnd = `${year}-${paddedMonth}-${String(lastDay).padStart(2, "0")}`;
 
-    const { data: salesData, error } = await supabase
+    let salesQuery = supabase
       .from("sales")
       .select(`id,sale_date,total_usd,fx_rate_used,sales_channels(name),sale_items(product_name,variant_name,quantity,usd_price,cost_price_usd,subtotal_usd)`)
       .eq("status", "vendido")
       .is("voided_at", null)
       .gte("sale_date", monthStart)
-      .lte("sale_date", monthEnd)
-      .order("sale_date", { ascending: false });
+      .lte("sale_date", monthEnd);
+
+    if (
+      selectedSalesChannels.length === 1 &&
+      selectedSalesChannels[0] === "none"
+    ) {
+      salesQuery = salesQuery.is("sales_channel_id", null);
+    } else if (selectedSalesChannels.length > 0) {
+      const channelIds = selectedSalesChannels
+        .filter((channelId) => channelId !== "none")
+        .map(Number);
+
+      if (channelIds.length > 0 && selectedSalesChannels.includes("none")) {
+        salesQuery = salesQuery.or(
+          `sales_channel_id.in.(${channelIds.join(",")}),sales_channel_id.is.null`,
+        );
+      } else if (channelIds.length > 0) {
+        salesQuery = salesQuery.in("sales_channel_id", channelIds);
+      }
+    }
+
+    salesQuery = salesQuery.order("sale_date", { ascending: false });
+
+    const { data: salesData, error } = await salesQuery;
 
     if (error) {
       console.error("Error loading month detail:", error);
@@ -516,7 +538,7 @@ export default function FinancePage() {
     setDetailSales(enrichedSales);
     setDetailLoading(false);
     setDetailDialogOpen(true);
-  }, [fxRate, usdtRate]);
+  }, [selectedSalesChannels, fxRate, usdtRate]);
 
   const toggleSalesChannelFilter = (channelId) => {
     setSelectedSalesChannels((current) =>
