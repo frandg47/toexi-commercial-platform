@@ -364,7 +364,7 @@ export default function ProductDetailDialog({
                     {enrichedMethods
                       .filter(
                         (m) =>
-                          !["efectivo", "transferencia", "usd"].includes(
+                          !["efectivo", "transferencia", "usd", "usdt"].includes(
                             m.name.toLowerCase()
                           )
                       )
