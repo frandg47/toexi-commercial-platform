@@ -154,8 +154,7 @@ export default function InventoryConfig() {
   const [units, setUnits] = useState([]);
   const [filters, setFilters] = useState({
     search: "",
-    trackingMode: "all",
-    unitStatus: "all",
+    unitStatus: "available",
   });
   const [selectedUnit, setSelectedUnit] = useState(null);
   const [unitEvents, setUnitEvents] = useState([]);
@@ -181,8 +180,13 @@ export default function InventoryConfig() {
   const [unitsTotalCount, setUnitsTotalCount] = useState(0);
   const [allUnitsForCount, setAllUnitsForCount] = useState([]);
 
+  const [summaryPage, setSummaryPage] = useState(1);
+  const summaryPageSize = 30;
+  const [summaryTotalCount, setSummaryTotalCount] = useState(0);
+
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [activeTab, setActiveTab] = useState("units");
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(searchTerm), 300);
@@ -220,13 +224,6 @@ export default function InventoryConfig() {
                 if (debouncedSearch) {
                   const term = `%${debouncedSearch}%`;
                   query = query.or(`identifier_value.ilike.${term}`);
-                }
-
-                if (filters.trackingMode !== "all") {
-                  query = query.eq(
-                    "variant.products.inventory_tracking_mode",
-                    filters.trackingMode,
-                  );
                 }
 
                 if (filters.unitStatus !== "all") {
@@ -271,7 +268,7 @@ export default function InventoryConfig() {
       setRefreshing(false);
       setLoading(false);
     },
-    [unitsPage, unitsPageSize, filters.trackingMode, filters.unitStatus, debouncedSearch],
+    [unitsPage, unitsPageSize, filters.unitStatus, debouncedSearch],
   );
 
   useEffect(() => {
@@ -280,7 +277,8 @@ export default function InventoryConfig() {
 
   useEffect(() => {
     setUnitsPage(1);
-  }, [debouncedSearch, filters.trackingMode, filters.unitStatus]);
+    setSummaryPage(1);
+  }, [debouncedSearch, filters.unitStatus]);
 
   useEffect(() => {
     fetchInventoryData(true);
@@ -399,8 +397,9 @@ export default function InventoryConfig() {
 
     return variants
       .filter((variant) => {
-        const trackingMode =
-          variant.products?.inventory_tracking_mode || "quantity";
+        const stock = Number(variant.stock || 0);
+        if (stock <= 0) return false;
+
         const searchable = normalizeText(
           [
             variant.products?.name,
@@ -415,12 +414,7 @@ export default function InventoryConfig() {
             .join(" "),
         );
 
-        const matchesSearch = !query || searchable.includes(query);
-        const matchesTracking =
-          filters.trackingMode === "all" ||
-          trackingMode === filters.trackingMode;
-
-        return matchesSearch && matchesTracking;
+        return !query || searchable.includes(query);
       })
       .map((variant) => ({
         ...variant,
@@ -433,7 +427,16 @@ export default function InventoryConfig() {
           other: 0,
         },
       }));
-  }, [debouncedSearch, filters.trackingMode, unitCountsByVariant, variants]);
+  }, [debouncedSearch, unitCountsByVariant, variants]);
+
+  useEffect(() => {
+    setSummaryTotalCount(summaryRows.length);
+  }, [summaryRows]);
+
+  const paginatedSummaryRows = useMemo(() => {
+    const from = (summaryPage - 1) * summaryPageSize;
+    return summaryRows.slice(from, from + summaryPageSize);
+  }, [summaryRows, summaryPage, summaryPageSize]);
 
   const filteredUnits = units;
 
@@ -949,32 +952,16 @@ export default function InventoryConfig() {
 
       <Card className="mt-6">
         <CardContent className="pt-6">
-          <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_220px_220px]">
+          <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_220px]">
             <div className="relative">
               <IconSearch className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 className="pl-9"
-                placeholder="Buscar por producto, variante, IMEI/SN, proveedor o cliente"
+                placeholder={activeTab === "units" ? "Buscar por IMEI únicamente" : "Buscar por producto, variante"}
                 value={searchTerm}
                 onChange={(event) => setSearchTerm(event.target.value)}
               />
             </div>
-
-            <Select
-              value={filters.trackingMode}
-              onValueChange={(value) =>
-                setFilters((current) => ({ ...current, trackingMode: value }))
-              }
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Tipo de tracking" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Todos los modos</SelectItem>
-                <SelectItem value="quantity">Por cantidad</SelectItem>
-                <SelectItem value="serial">Serializado</SelectItem>
-              </SelectContent>
-            </Select>
 
             <Select
               value={filters.unitStatus}
@@ -998,7 +985,7 @@ export default function InventoryConfig() {
         </CardContent>
       </Card>
 
-      <Tabs defaultValue="summary" className="mt-6 space-y-4">
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="mt-6 space-y-4">
         <TabsList>
           <TabsTrigger value="summary">
             <IconBox className="mr-2 h-4 w-4" />
@@ -1020,7 +1007,7 @@ export default function InventoryConfig() {
                 <div className="py-10 text-sm text-muted-foreground">
                   Cargando inventario...
                 </div>
-              ) : summaryRows.length === 0 ? (
+              ) : paginatedSummaryRows.length === 0 ? (
                 <div className="py-10 text-sm text-muted-foreground">
                   No hay variantes que coincidan con los filtros actuales.
                 </div>
@@ -1047,7 +1034,7 @@ export default function InventoryConfig() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {summaryRows.map((variant) => (
+                      {paginatedSummaryRows.map((variant) => (
                         <TableRow key={variant.id}>
                           <TableCell className="w-[320px] min-w-[320px] max-w-[320px]">
                             <div className="space-y-1 max-w-[320px]">
@@ -1108,6 +1095,49 @@ export default function InventoryConfig() {
                       ))}
                     </TableBody>
                   </Table>
+                  <div className="flex flex-col items-center justify-between gap-3 py-3 sm:flex-row">
+                    <div className="text-sm text-muted-foreground">
+                      {summaryTotalCount > 0
+                        ? `Mostrando ${paginatedSummaryRows.length} de ${summaryTotalCount} variantes`
+                        : `${summaryTotalCount} variantes en total`}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setSummaryPage((p) => Math.max(1, p - 1))}
+                        disabled={summaryPage <= 1 || loading}
+                      >
+                        Anterior
+                      </Button>
+                      <div className="text-sm">
+                        {summaryPage} /{" "}
+                        {Math.max(
+                          1,
+                          Math.ceil(summaryTotalCount / summaryPageSize),
+                        )}
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          setSummaryPage((p) =>
+                            Math.min(
+                              Math.ceil(summaryTotalCount / summaryPageSize),
+                              p + 1,
+                            ),
+                          )
+                        }
+                        disabled={
+                          summaryPage >=
+                            Math.ceil(summaryTotalCount / summaryPageSize) ||
+                          loading
+                        }
+                      >
+                        Siguiente
+                      </Button>
+                    </div>
+                  </div>
                 </div>
               )}
             </CardContent>
