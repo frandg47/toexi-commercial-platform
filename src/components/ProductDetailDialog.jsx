@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   IconBox,
   IconColorSwatch,
@@ -48,6 +48,16 @@ export default function ProductDetailDialog({
     return name?.replace(/\s+/g, " ").trim();
   }
 
+  function normalizeVariantKey(name) {
+    if (!name) return "";
+    return name
+      .toLowerCase()
+      .replace(/\s+/g, " ")
+      .replace(/\s*\/\s*/g, " / ")
+      .replace(/(\d+)\s*(gb|tb|mb|ghz|mhz|mp|mah|wh)\b/gi, "$1$2")
+      .trim();
+  }
+
 
   // 🔹 Variantes reales
   const realVariants = useMemo(() => {
@@ -68,11 +78,10 @@ export default function ProductDetailDialog({
     const map = new Map();
 
     for (const v of realVariants) {
-      const cleaned = cleanName(v.variant_name || "");
+      const rawName = v.variant_name || "";
+      const key = normalizeVariantKey(rawName) || "modelo base";
 
-      const key = cleaned !== "" ? cleaned : "Modelo Base";
-
-      if (!map.has(key)) map.set(key, { key, variants: [] });
+      if (!map.has(key)) map.set(key, { key, displayName: rawName || "Modelo Base", variants: [] });
       map.get(key).variants.push(v);
     }
 
@@ -195,7 +204,7 @@ export default function ProductDetailDialog({
               </p>
               <p>
                 <span className="font-semibold text-foreground">Variante:</span>{" "}
-                {activeTab || "—"}
+                {selectedGroup?.displayName || "—"}
               </p>
 
               {/* Información técnica del modelo seleccionado */}
@@ -294,7 +303,7 @@ export default function ProductDetailDialog({
 
             {/* Tabs responsivos */}
             <Tabs value={activeTab} onValueChange={setActiveTab}>
-              <TabsList className="flex flex-wrap gap-2 bg-muted/30 rounded-lg overflow-x-auto">
+              <TabsList className="flex flex-wrap h-auto w-full gap-2 p-1.5 bg-muted/40 rounded-xl justify-start items-center">
                 {grouped.map((g) => (
                   <TabsTrigger
                     key={g.key}
@@ -304,122 +313,112 @@ export default function ProductDetailDialog({
                       : "hover:bg-muted"
                       }`}
                   >
-                    {g.key}
+                    {g.displayName}
                   </TabsTrigger>
                 ))}
               </TabsList>
-
-              {/* Contenido de cada grupo */}
-              {grouped.map((g) => (
-                <TabsContent
-                  key={g.key}
-                  value={g.key}
-                  className="mt-5 space-y-6"
-                >
-                  {/* 🔹 Grilla de variantes */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {g.variants.map((v) => (
-                      <div
-                        key={v.id}
-                        className={`relative rounded-xl border bg-card p-4 shadow-sm hover:shadow-md transition-all ${v.stock === 0
-                          ? "opacity-60 border-destructive/60"
-                          : "hover:border-primary/70"
-                          }`}
-                      >
-                        <div className="flex flex-col items-center text-center p-3 gap-1">
-                          {v.color && (
-                            <p className="text-sm font-semibold">{v.color}</p>
-                          )}
-
-                          <p className="text-sm text-muted-foreground">
-                            {formatCurrencyUSD(v.usd_price)}
-                          </p>
-
-                          <p
-                            className={`text-xs font-medium ${v.stock === 0 ? "text-destructive" : "text-green-600"
-                              }`}
-                          >
-                            Stock: {v.stock}
-                          </p>
-                        </div>
-
-
-
-                        {v.stock === 0 && (
-                          <span className="absolute top-2 right-2 text-[10px] bg-destructive px-2 py-0.5 rounded-md uppercase shadow-sm">
-                            SIN STOCK
-                          </span>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* 🔹 Métodos de pago */}
-                  <div className="text-xs sm:text-sm text-muted-foreground space-y-2 mt-2">
-                    <h3 className="font-semibold text-lg flex items-center gap-2 text-foreground">
-                      <IconCreditCard className="w-5 h-5 text-purple-600" />
-                      Métodos de pago
-                    </h3>
-
-                    {enrichedMethods
-                      .filter(
-                        (m) =>
-                          !["efectivo", "transferencia", "usd", "usdt"].includes(
-                            m.name.toLowerCase()
-                          )
-                      )
-                      .map((m) => {
-                        const basePriceUSD =
-                          g.variants[0]?.usd_price || product.usdPrice;
-                        return (
-                          <div
-                            key={m.id}
-                            className="border-b pb-1 mb-2 last:border-0"
-                          >
-                            <p className="font-semibold text-sm text-foreground">
-                              {m.name}
-                            </p>
-                            {m.installments.length > 0 ? (
-                              m.installments.map((i) => {
-                                const total =
-                                  basePriceUSD * fxRate * i.multiplier;
-                                const cuota = total / i.installments;
-                                const extra = (i.multiplier - 1) * 100;
-                                return (
-                                  <div
-                                    key={i.id}
-                                    className="flex flex-col sm:flex-row sm:justify-between gap-1 text-muted-foreground"
-                                  >
-                                    <span>
-                                      {i.installments} cuotas de{" "}
-                                      {formatCurrencyARS(cuota)}{" "}
-                                      {/* <span className="text-amber-600">
-                                        (+extra.toFixed(1)%)
-                                      </span> */}
-                                    </span>
-                                    <span className="font-medium text-foreground">
-                                      {formatCurrencyARS(total)}
-                                    </span>
-                                  </div>
-                                );
-                              })
-                            ) : (
-                              <div className="flex justify-between">
-                                <span>1 pago sin recargo</span>
-                                <span className="font-medium text-foreground">
-                                  {formatCurrencyARS(
-                                    basePriceUSD * fxRate * m.multiplier
-                                  )}
-                                </span>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                  </div>
-                </TabsContent>
-              ))}
             </Tabs>
+
+            {/* Contenido del grupo seleccionado */}
+            {selectedGroup && (
+              <div className="mt-5 space-y-6">
+                {/* 🔹 Grilla de variantes */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {selectedGroup.variants.map((v) => (
+                    <div
+                      key={v.id}
+                      className={`relative rounded-xl border bg-card p-4 shadow-sm hover:shadow-md transition-all ${v.stock === 0
+                        ? "opacity-60 border-destructive/60"
+                        : "hover:border-primary/70"
+                        }`}
+                    >
+                      <div className="flex flex-col items-center text-center p-3 gap-1">
+                        {v.color && (
+                          <p className="text-sm font-semibold">{v.color}</p>
+                        )}
+
+                        <p className="text-sm text-muted-foreground">
+                          {formatCurrencyUSD(v.usd_price)}
+                        </p>
+
+                        <p
+                          className={`text-xs font-medium ${v.stock === 0 ? "text-destructive" : "text-green-600"
+                            }`}
+                        >
+                          Stock: {v.stock}
+                        </p>
+                      </div>
+
+                      {v.stock === 0 && (
+                        <span className="absolute top-2 right-2 text-[10px] bg-destructive px-2 py-0.5 rounded-md uppercase shadow-sm">
+                          SIN STOCK
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                {/* 🔹 Métodos de pago */}
+                <div className="text-xs sm:text-sm text-muted-foreground space-y-2 mt-2">
+                  <h3 className="font-semibold text-lg flex items-center gap-2 text-foreground">
+                    <IconCreditCard className="w-5 h-5 text-purple-600" />
+                    Métodos de pago
+                  </h3>
+
+                  {enrichedMethods
+                    .filter(
+                      (m) =>
+                        !["efectivo", "transferencia", "usd", "usdt"].includes(
+                          m.name.toLowerCase()
+                        )
+                    )
+                    .map((m) => {
+                      const basePriceUSD =
+                        selectedGroup.variants[0]?.usd_price || product.usdPrice;
+                      return (
+                        <div
+                          key={m.id}
+                          className="border-b pb-1 mb-2 last:border-0"
+                        >
+                          <p className="font-semibold text-sm text-foreground">
+                            {m.name}
+                          </p>
+                          {m.installments.length > 0 ? (
+                            m.installments.map((i) => {
+                              const total =
+                                basePriceUSD * fxRate * i.multiplier;
+                              const cuota = total / i.installments;
+                              return (
+                                <div
+                                  key={i.id}
+                                  className="flex flex-col sm:flex-row sm:justify-between gap-1 text-muted-foreground"
+                                >
+                                  <span>
+                                    {i.installments} cuotas de{" "}
+                                    {formatCurrencyARS(cuota)}
+                                  </span>
+                                  <span className="font-medium text-foreground">
+                                    {formatCurrencyARS(total)}
+                                  </span>
+                                </div>
+                              );
+                            })
+                          ) : (
+                            <div className="flex justify-between">
+                              <span>1 pago sin recargo</span>
+                              <span className="font-medium text-foreground">
+                                {formatCurrencyARS(
+                                  basePriceUSD * fxRate * m.multiplier
+                                )}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
+            )}
           </div>
 
         )}

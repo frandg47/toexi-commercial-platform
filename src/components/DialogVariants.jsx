@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { IconPlus, IconTrash, IconDeviceFloppy } from "@tabler/icons-react";
+import { IconPlus, IconTrash, IconDeviceFloppy, IconCopy } from "@tabler/icons-react";
 // ❌ ELIMINADO: import Swal from "sweetalert2";
 
 // ✅ AGREGADO: Sonner para notificaciones
@@ -38,6 +38,15 @@ export default function DialogVariants({ open, onClose, productId, onSave }) {
   const [loading, setLoading] = useState(false);
   const [product, setProduct] = useState(null);
   const isSerialTracked = product?.inventory_tracking_mode === "serial";
+
+  const generateVariantName = (variant) => {
+    const storage = variant.storage_capacity || variant.storage || "";
+    const ram = variant.ram || "";
+    if (storage && ram) return `${storage} / ${ram}`;
+    if (storage) return storage;
+    if (ram) return ram;
+    return "";
+  };
 
   // Configuración de campos visibles según categoría
   const VARIANT_FIELDS_BY_CATEGORY = {
@@ -145,10 +154,25 @@ export default function DialogVariants({ open, onClose, productId, onSave }) {
     if (open) fetchData();
   }, [open, productId]);
 
+  const UPPERCASE_FIELDS = [
+    "variant_name", "color", "storage", "storage_capacity", "storage_type",
+    "ram", "ram_type", "processor", "screen_size", "resolution", "battery",
+    "graphics_card", "camera_main", "camera_front", "operating_system",
+  ];
+
   const handleChange = (index, field, value) => {
     setVariants((prev) => {
       const updated = [...prev];
-      updated[index][field] = value;
+      const finalValue = UPPERCASE_FIELDS.includes(field) && typeof value === "string"
+        ? value.toUpperCase()
+        : value;
+      updated[index][field] = finalValue;
+
+      const autoFields = ["storage", "storage_capacity", "ram"];
+      if (autoFields.includes(field) && !updated[index].variant_name_manual) {
+        updated[index].variant_name = generateVariantName(updated[index]);
+      }
+
       return updated;
     });
   };
@@ -159,6 +183,7 @@ export default function DialogVariants({ open, onClose, productId, onSave }) {
       {
         product_id: productId,
         variant_name: "",
+        variant_name_manual: false,
         storage: "",
         ram: "",
         color: "",
@@ -217,6 +242,23 @@ export default function DialogVariants({ open, onClose, productId, onSave }) {
     // Nota: La lógica de confirmación (`Swal.fire`) se movió al JSX,
     // por lo que si se llama a esta función, significa que el usuario ya confirmó.
     await handleDeleteVariant(index, variant);
+  };
+
+  const duplicateVariant = (index) => {
+    const source = variants[index];
+    const duplicate = {
+      ...source,
+      id: undefined,
+      color: "",
+      usd_price: "",
+      wholesale_price: 0,
+      cost_price_usd: "",
+      stock: 0,
+      variant_name_manual: source.variant_name_manual,
+    };
+    const updated = [...variants];
+    updated.splice(index + 1, 0, duplicate);
+    setVariants(updated);
   };
 
 
@@ -362,11 +404,16 @@ export default function DialogVariants({ open, onClose, productId, onSave }) {
                       </Label>
                       <Input
                         id={`variant-name-${index}`}
-                        placeholder="ej: 256GB / 8GB / Negro"
+                        placeholder="ej: 256GB / 8GB"
                         value={v.variant_name || ""}
-                        onChange={(e) =>
-                          handleChange(index, "variant_name", e.target.value)
-                        }
+                        onChange={(e) => {
+                          handleChange(index, "variant_name", e.target.value);
+                          setVariants((prev) => {
+                            const updated = [...prev];
+                            updated[index].variant_name_manual = true;
+                            return updated;
+                          });
+                        }}
                       />
                     </div>
 
@@ -630,7 +677,7 @@ export default function DialogVariants({ open, onClose, productId, onSave }) {
                       )}
                     </div>
 
-                    {/* Estado y eliminar */}
+                    {/* Estado y acciones */}
                     <div className="flex items-center justify-between pt-2 border-t mt-2">
                       <div className="flex items-center space-x-2">
                         <Switch
@@ -644,42 +691,52 @@ export default function DialogVariants({ open, onClose, productId, onSave }) {
                         </span>
                       </div>
 
-                      {/* 🔄 REEMPLAZO 1: SweetAlert a AlertDialog para confirmación */}
-                      <AlertDialog>
-                        <AlertDialogTrigger asChild>
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="hover:bg-destructive/10 hover:text-destructive"
-                          // Ya no llama a removeVariant directamente
-                          >
-                            <IconTrash className="h-4 w-4" />
-                          </Button>
-                        </AlertDialogTrigger>
-                        <AlertDialogContent>
-                          <AlertDialogHeader>
-                            <AlertDialogTitle>
-                              Eliminar variante
-                            </AlertDialogTitle>
-                            <AlertDialogDescription>
-                              ¿Deseas eliminar esta variante?
-                            </AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel>
-                              Cancelar
-                            </AlertDialogCancel>
-                            <AlertDialogAction
-                              // Llama a la lógica de eliminación al confirmar
-                              onClick={() => handleDeleteVariant(index, v)}
-                              className="bg-destructive hover:bg-destructive/90"
+                      <div className="flex items-center gap-1">
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          onClick={() => duplicateVariant(index)}
+                          title="Duplicar variante"
+                          className="hover:bg-primary/10 hover:text-primary"
+                        >
+                          <IconCopy className="h-4 w-4" />
+                        </Button>
+
+                        {/* 🔄 REEMPLAZO 1: SweetAlert a AlertDialog para confirmación */}
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="hover:bg-destructive/10 hover:text-destructive"
                             >
-                              Sí, eliminar
-                            </AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
-                      {/* FIN REEMPLAZO 1 */}
+                              <IconTrash className="h-4 w-4" />
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>
+                                Eliminar variante
+                              </AlertDialogTitle>
+                              <AlertDialogDescription>
+                                ¿Deseas eliminar esta variante?
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>
+                                Cancelar
+                              </AlertDialogCancel>
+                              <AlertDialogAction
+                                onClick={() => handleDeleteVariant(index, v)}
+                                className="bg-destructive hover:bg-destructive/90"
+                              >
+                                Sí, eliminar
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                        {/* FIN REEMPLAZO 1 */}
+                      </div>
 
                     </div>
                   </div>
