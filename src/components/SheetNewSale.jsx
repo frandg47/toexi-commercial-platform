@@ -530,6 +530,10 @@ const buildSelectedVariant = (variant) => ({
     // Notas
     setForm({ notes: "" });
 
+    // Descuento y recargo
+    setDiscount({ type: "none", value: 0 });
+    setSurcharge({ type: "none", value: 0 });
+
     // Canal de venta (volver a Local por defecto)
     const local = salesChannels.find(ch => ch.name === "Local");
     if (local) setSelectedChannel(String(local.id));
