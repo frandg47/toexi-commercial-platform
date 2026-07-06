@@ -37,6 +37,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { IconEdit } from "@tabler/icons-react";
 
@@ -540,162 +541,162 @@ export default function AccountsConfig() {
           </Button>
         </div>
 
-        <div className="rounded-md border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Cuenta</TableHead>
-                <TableHead>Moneda</TableHead>
-                <TableHead>Saldo inicial</TableHead>
-                <TableHead>Saldo actual</TableHead>
-                <TableHead>Saldo disponible</TableHead>
-                <TableHead>Incluir</TableHead>
-                <TableHead>Capital ref.</TableHead>
-                <TableHead className="text-right">Acciones</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {accountBalances.map((acc) => (
-                <TableRow key={acc.id}>
-                  <TableCell>
-                    {editId === acc.id ? (
-                      <Input
-                        value={editForm.name}
-                        onChange={(e) =>
-                          setEditForm((f) => ({ ...f, name: e.target.value }))
-                        }
-                      />
-                    ) : (
-                      acc.name
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    {editId === acc.id ? (
-                      <Select
-                        value={editForm.currency}
-                        onValueChange={(value) =>
-                          setEditForm((f) => ({ ...f, currency: value }))
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Moneda" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="ARS">ARS</SelectItem>
-                          <SelectItem value="USD">USD</SelectItem>
-                          <SelectItem value="USDT">USDT</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    ) : (
-                      acc.currency
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    {editId === acc.id ? (
-                      <Input
-                        type="number"
-                        step="0.01"
-                        value={editForm.initial_balance}
-                        onChange={(e) =>
-                          setEditForm((f) => ({
-                            ...f,
-                            initial_balance: e.target.value,
-                          }))
-                        }
-                      />
-                    ) : acc.currency === "USD" ? (
-                      formatUSD(acc.initial_balance)
-                    ) : acc.currency === "USDT" ? (
-                      formatUSDT(acc.initial_balance)
-                    ) : (
-                      formatARS(acc.initial_balance)
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    {acc.currency === "USD"
-                      ? formatUSD(acc.current_balance)
-                      : acc.currency === "USDT"
-                        ? formatUSDT(acc.current_balance)
-                        : formatARS(acc.current_balance)}
-                  </TableCell>
-                  <TableCell>
-                    {acc.currency === "USD"
-                      ? formatUSD(acc.current_balance)
-                      : acc.currency === "USDT"
-                        ? formatUSDT(acc.current_balance)
-                        : formatARS(acc.current_balance)}
-                  </TableCell>
-                  <TableCell>
-                    {editId === acc.id ? (
-                      <Switch
-                        checked={editForm.include_in_balance}
-                        onCheckedChange={(checked) =>
-                          setEditForm((f) => ({ ...f, include_in_balance: checked }))
-                        }
-                      />
-                    ) : acc.include_in_balance ? (
-                      "Si"
-                    ) : (
-                      "No"
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    {editId === acc.id ? (
-                      <Switch
-                        checked={editForm.is_reference_capital}
-                        onCheckedChange={(checked) =>
-                          setEditForm((f) => ({
-                            ...f,
-                            is_reference_capital: checked,
-                          }))
-                        }
-                      />
-                    ) : acc.is_reference_capital ? (
-                      "Si"
-                    ) : (
-                      "No"
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {editId === acc.id ? (
-                      <div className="flex items-center justify-end gap-2">
-                        <Button
-                          size="sm"
-                          onClick={handleUpdateAccount}
-                          disabled={loading}
-                        >
-                          Guardar
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={cancelEdit}
-                          disabled={loading}
-                        >
-                          Cancelar
-                        </Button>
-                      </div>
-                    ) : (
-                      <Button size="sm" variant="outline" onClick={() => startEdit(acc)}>
-                        <IconEdit className="h-4 w-4" />
-                      </Button>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
-              {accountBalances.length === 0 && (
-                <TableRow>
-                    <TableCell
-                      colSpan={8}
-                      className="text-center text-muted-foreground"
-                    >
-                    No hay cuentas creadas.
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </div>
+        <Tabs defaultValue="regular">
+          <TabsList>
+            <TabsTrigger value="regular">Cuentas</TabsTrigger>
+            <TabsTrigger value="investment">Inversiones</TabsTrigger>
+          </TabsList>
+          {["regular", "investment"].map((tab) => {
+            const isInvestment = tab === "investment";
+            const filtered = accountBalances.filter(
+              (acc) => acc.is_reference_capital === isInvestment
+            );
+            return (
+              <TabsContent key={tab} value={tab}>
+                <div className="rounded-md border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Cuenta</TableHead>
+                        <TableHead>Moneda</TableHead>
+                        <TableHead>Saldo inicial</TableHead>
+                        <TableHead>Saldo actual</TableHead>
+                        <TableHead>Saldo disponible</TableHead>
+                        <TableHead>Incluir</TableHead>
+                        <TableHead className="text-right">Acciones</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filtered.map((acc) => (
+                        <TableRow key={acc.id}>
+                          <TableCell>
+                            {editId === acc.id ? (
+                              <Input
+                                value={editForm.name}
+                                onChange={(e) =>
+                                  setEditForm((f) => ({ ...f, name: e.target.value }))
+                                }
+                              />
+                            ) : (
+                              acc.name
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            {editId === acc.id ? (
+                              <Select
+                                value={editForm.currency}
+                                onValueChange={(value) =>
+                                  setEditForm((f) => ({ ...f, currency: value }))
+                                }
+                              >
+                                <SelectTrigger>
+                                  <SelectValue placeholder="Moneda" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="ARS">ARS</SelectItem>
+                                  <SelectItem value="USD">USD</SelectItem>
+                                  <SelectItem value="USDT">USDT</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            ) : (
+                              acc.currency
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            {editId === acc.id ? (
+                              <Input
+                                type="number"
+                                step="0.01"
+                                value={editForm.initial_balance}
+                                onChange={(e) =>
+                                  setEditForm((f) => ({
+                                    ...f,
+                                    initial_balance: e.target.value,
+                                  }))
+                                }
+                              />
+                            ) : acc.currency === "USD" ? (
+                              formatUSD(acc.initial_balance)
+                            ) : acc.currency === "USDT" ? (
+                              formatUSDT(acc.initial_balance)
+                            ) : (
+                              formatARS(acc.initial_balance)
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            {acc.currency === "USD"
+                              ? formatUSD(acc.current_balance)
+                              : acc.currency === "USDT"
+                                ? formatUSDT(acc.current_balance)
+                                : formatARS(acc.current_balance)}
+                          </TableCell>
+                          <TableCell>
+                            {acc.currency === "USD"
+                              ? formatUSD(acc.current_balance)
+                              : acc.currency === "USDT"
+                                ? formatUSDT(acc.current_balance)
+                                : formatARS(acc.current_balance)}
+                          </TableCell>
+                          <TableCell>
+                            {editId === acc.id ? (
+                              <Switch
+                                checked={editForm.include_in_balance}
+                                onCheckedChange={(checked) =>
+                                  setEditForm((f) => ({ ...f, include_in_balance: checked }))
+                                }
+                              />
+                            ) : acc.include_in_balance ? (
+                              "Si"
+                            ) : (
+                              "No"
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {editId === acc.id ? (
+                              <div className="flex items-center justify-end gap-2">
+                                <Button
+                                  size="sm"
+                                  onClick={handleUpdateAccount}
+                                  disabled={loading}
+                                >
+                                  Guardar
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={cancelEdit}
+                                  disabled={loading}
+                                >
+                                  Cancelar
+                                </Button>
+                              </div>
+                            ) : (
+                              <Button size="sm" variant="outline" onClick={() => startEdit(acc)}>
+                                <IconEdit className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                      {filtered.length === 0 && (
+                        <TableRow>
+                          <TableCell
+                            colSpan={7}
+                            className="text-center text-muted-foreground"
+                          >
+                            {isInvestment
+                              ? "No hay cuentas de inversiones."
+                              : "No hay cuentas creadas."}
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+              </TabsContent>
+            );
+          })}
+        </Tabs>
       </CardContent>
 
       <Dialog open={transferOpen} onOpenChange={setTransferOpen}>
