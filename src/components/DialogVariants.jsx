@@ -278,9 +278,10 @@ export default function DialogVariants({ open, onClose, productId, onSave }) {
       return;
     }
 
-    const cleanForDb = ({ variant_name_manual, ...rest }) => rest;
-    const inserts = variants.filter((v) => !v.id).map(cleanForDb);
-    const updates = variants.filter((v) => v.id).map(cleanForDb);
+    const cleanForInsert = ({ variant_name_manual, id, ...rest }) => rest;
+    const cleanForUpdate = ({ variant_name_manual, ...rest }) => rest;
+    const inserts = variants.filter((v) => !v.id).map(cleanForInsert);
+    const updates = variants.filter((v) => v.id).map(cleanForUpdate);
 
     // Se refactoriza la lógica de guardado dentro de una función para usar toast.promise
     const savePromise = async () => {
