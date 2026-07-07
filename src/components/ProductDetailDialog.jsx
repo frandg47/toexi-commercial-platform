@@ -122,28 +122,43 @@ export default function ProductDetailDialog({
   }, [paymentMethods, paymentInstallments]);
 
   // Campos que queremos mostrar dinámicamente en las variantes
-  const VARIANT_DISPLAY_FIELDS = {
+  const CATEGORY_VARIANT_FIELDS = {
+    Celulares: ["storage_capacity", "ram", "processor", "screen_size", "battery", "camera_main"],
+    Tablets: ["storage_capacity", "ram", "processor", "screen_size", "battery", "camera_main"],
+    Notebooks: ["storage_capacity", "ram", "processor", "graphics_card", "screen_size", "weight"],
+    Auriculares: ["color"],
+    Accesorios: ["color"],
+    default: ["color"],
+  };
+
+  const VARIANT_FIELD_LABELS = {
     storage: "Almacenamiento",
-    storage_capacity: "Capacidad de almacenamiento",
+    storage_capacity: "Almacenamiento",
     storage_type: "Tipo de almacenamiento",
     ram: "RAM",
     ram_type: "Tipo de RAM",
     ram_frequency: "Frecuencia de RAM",
     processor: "Procesador",
-    graphics_card: "Tarjeta gráfica",
+    graphics_card: "Gráfica",
     screen_size: "Pantalla",
     resolution: "Resolución",
     battery: "Batería",
     weight: "Peso",
-    operating_system: "Sistema operativo",
-    camera_main: "Cámara principal",
-    camera_front: "Cámara frontal",
+    operating_system: "SO",
+    camera_main: "Cámara",
+    camera_front: "Cám. frontal",
+    color: "Color",
   };
+
+  const displayFields = useMemo(() => {
+    const category = product?.categoryName;
+    return CATEGORY_VARIANT_FIELDS[category] || CATEGORY_VARIANT_FIELDS.default;
+  }, [product?.categoryName]);
 
   const technicalSpecs = useMemo(() => {
     if (!firstVariant) return [];
 
-    return Object.entries(VARIANT_DISPLAY_FIELDS)
+    return Object.entries(VARIANT_FIELD_LABELS)
       .map(([field, label]) => {
         const value = firstVariant[field];
         if (!value) return null;
@@ -332,21 +347,29 @@ export default function ProductDetailDialog({
                         : "hover:border-primary/70"
                         }`}
                     >
-                      <div className="flex flex-col items-center text-center p-3 gap-1">
-                        {v.color && (
-                          <p className="text-sm font-semibold">{v.color}</p>
-                        )}
+                      <div className="flex flex-col gap-1.5">
+                        {displayFields.map((field) => {
+                          const value = v[field];
+                          if (!value) return null;
+                          return (
+                            <div key={field} className="flex justify-between text-sm">
+                              <span className="text-muted-foreground">{VARIANT_FIELD_LABELS[field]}:</span>
+                              <span className="font-medium text-right">{value}</span>
+                            </div>
+                          );
+                        })}
 
-                        <p className="text-sm text-muted-foreground">
-                          {formatCurrencyUSD(v.usd_price)}
-                        </p>
+                        <div className="flex justify-between text-sm mt-1 pt-1 border-t">
+                          <span className="text-muted-foreground">Precio:</span>
+                          <span className="font-semibold">{formatCurrencyUSD(v.usd_price)}</span>
+                        </div>
 
-                        <p
-                          className={`text-xs font-medium ${v.stock === 0 ? "text-destructive" : "text-green-600"
-                            }`}
-                        >
-                          Stock: {v.stock}
-                        </p>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">Stock:</span>
+                          <span className={`font-medium ${v.stock === 0 ? "text-destructive" : "text-green-600"}`}>
+                            {v.stock}
+                          </span>
+                        </div>
                       </div>
 
                       {v.stock === 0 && (

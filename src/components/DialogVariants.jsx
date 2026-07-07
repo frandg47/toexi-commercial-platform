@@ -118,9 +118,13 @@ export default function DialogVariants({ open, onClose, productId, onSave }) {
   // Determinar qué campos mostrar
   const visibleFields = useMemo(() => {
     if (!product?.categories?.name) return VARIANT_FIELDS_BY_CATEGORY.default;
-    const baseFields =
-      VARIANT_FIELDS_BY_CATEGORY[product.categories.name] ||
-      VARIANT_FIELDS_BY_CATEGORY.default;
+    const categoryName = product.categories.name;
+    const matchedKey = Object.keys(VARIANT_FIELDS_BY_CATEGORY).find(
+      (k) => k.toLowerCase() === categoryName.toLowerCase()
+    );
+    const baseFields = matchedKey
+      ? VARIANT_FIELDS_BY_CATEGORY[matchedKey]
+      : VARIANT_FIELDS_BY_CATEGORY.default;
 
     return isOwner
       ? baseFields
