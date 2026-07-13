@@ -1673,17 +1673,6 @@ const buildSelectedVariant = (variant) => ({
                         p.payment_method_id ? String(p.payment_method_id) : ""
                       }
                       onValueChange={(val) => {
-                        // 🔥 1. Verificar si ya existe este método en otra fila
-                        const alreadyUsed = payments.some(
-                          (p, idx) => idx !== i && String(p.payment_method_id) === val
-                        );
-
-                        if (alreadyUsed) {
-                          toast.error("Ese método de pago ya está agregado.");
-                          return; // ❌ No actualizar
-                        }
-
-                        // 🔥 2. Si no está repetido, actualizar normalmente:
                         const chosen = paymentMethods.find((m) => String(m.id) === val);
 
                         updatePaymentField(i, "payment_method_id", val);
