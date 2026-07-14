@@ -25,6 +25,7 @@ import SellersPayments from "./pages/SellersPayments";
 import QuickPaymentCalculator from "./pages/QuickPaymentCalculator";
 import ExpensesPage from "./pages/ExpensesPage";
 import FinancePage from "./pages/FinancePage";
+import ReportsPage from "./pages/ReportsPage";
 import AftersalesPage from "./pages/AftersalesPage";
 
 // âš™ï¸ ConfiguraciÃ³n
@@ -156,6 +157,7 @@ export default function App() {
             <Route path="expenses" element={<ExpensesPage />} />
             <Route path="after-sales" element={<AftersalesPage />} />
             <Route path="finance" element={<FinancePage />} />
+            <Route path="reports" element={<ReportsPage />} />
             <Route path="settings/expenses" element={<ExpensesPage />} />
 
             {/* âš™ï¸ CONFIGURACIONES */}
