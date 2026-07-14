@@ -29,7 +29,22 @@ import {
 import { startOfMonth, endOfMonth, startOfWeek, endOfWeek } from "date-fns";
 import { es } from "date-fns/locale";
 import { toast } from "sonner";
-import { IconCalendar, IconRefresh } from "@tabler/icons-react";
+import {
+  IconCalendar,
+  IconRefresh,
+  IconDotsVertical,
+  IconTableExport,
+  IconPdf,
+} from "@tabler/icons-react";
+import * as XLSX from "xlsx";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Dialog,
   DialogContent,
@@ -106,6 +121,9 @@ export default function FinancePage() {
   const [detailMonth, setDetailMonth] = useState(null);
   const [detailSales, setDetailSales] = useState([]);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [exportFormat, setExportFormat] = useState(null);
+  const [exportTargetMonth, setExportTargetMonth] = useState("");
 
   const loadStaticData = useCallback(async () => {
     setLoading(true);
@@ -540,6 +558,261 @@ export default function FinancePage() {
     setDetailDialogOpen(true);
   }, [selectedSalesChannels, fxRate, usdtRate]);
 
+  const availableExportMonths = useMemo(() => {
+    return monthlyNetIncome.map((m) => m.month);
+  }, [monthlyNetIncome]);
+
+  const openExportDialog = useCallback((format) => {
+    setExportFormat(format);
+    setExportTargetMonth("");
+    setExportDialogOpen(true);
+  }, []);
+
+  const loadDetailAndExport = useCallback(
+    async (monthKey, format) => {
+      const [month, year] = monthKey.split("/");
+      const paddedMonth = month.padStart(2, "0");
+      const monthStart = `${year}-${paddedMonth}-01`;
+      const lastDay = new Date(Number(year), Number(month), 0).getDate();
+      const monthEnd = `${year}-${paddedMonth}-${String(lastDay).padStart(2, "0")}`;
+
+      let salesQuery = supabase
+        .from("sales")
+        .select(
+          `id,sale_date,total_usd,fx_rate_used,sales_channels(name),sale_items(product_name,variant_name,quantity,usd_price,cost_price_usd,subtotal_usd)`,
+        )
+        .eq("status", "vendido")
+        .is("voided_at", null)
+        .gte("sale_date", monthStart)
+        .lte("sale_date", monthEnd);
+
+      if (
+        selectedSalesChannels.length === 1 &&
+        selectedSalesChannels[0] === "none"
+      ) {
+        salesQuery = salesQuery.is("sales_channel_id", null);
+      } else if (selectedSalesChannels.length > 0) {
+        const channelIds = selectedSalesChannels
+          .filter((channelId) => channelId !== "none")
+          .map(Number);
+
+        if (channelIds.length > 0 && selectedSalesChannels.includes("none")) {
+          salesQuery = salesQuery.or(
+            `sales_channel_id.in.(${channelIds.join(",")}),sales_channel_id.is.null`,
+          );
+        } else if (channelIds.length > 0) {
+          salesQuery = salesQuery.in("sales_channel_id", channelIds);
+        }
+      }
+
+      salesQuery = salesQuery.order("sale_date", { ascending: false });
+
+      const { data: salesData, error } = await salesQuery;
+
+      if (error) {
+        toast.error("No se pudieron cargar las ventas", {
+          description: error.message,
+        });
+        return;
+      }
+
+      const saleIds = (salesData || []).map((s) => s.id);
+      const saleAccreditedIncome = {};
+
+      if (saleIds.length > 0) {
+        const { data: paymentsData } = await supabase
+          .from("sale_payments")
+          .select("id, sale_id")
+          .in("sale_id", saleIds);
+
+        const paymentIds = (paymentsData || []).map((p) => p.id);
+
+        if (paymentIds.length > 0) {
+          const { data: incomeMovements } = await supabase
+            .from("account_movements")
+            .select(
+              "amount, currency, related_id, accreditation_status, available_on",
+            )
+            .eq("type", "income")
+            .in("related_table", ["sale_payments", "sale_payment_history"])
+            .in("related_id", paymentIds);
+
+          const paymentToSale = new Map(
+            (paymentsData || []).map((p) => [p.id, p.sale_id]),
+          );
+          const today = todayDateKey();
+
+          for (const m of incomeMovements || []) {
+            if (
+              m.accreditation_status === "pending" &&
+              m.available_on &&
+              m.available_on > today
+            )
+              continue;
+
+            const saleId = paymentToSale.get(m.related_id);
+            if (!saleId) continue;
+
+            const amount = Number(m.amount || 0);
+            if (!amount) continue;
+
+            let amountUsd = null;
+            if (m.currency === "USD") {
+              amountUsd = amount;
+            } else if (m.currency === "USDT") {
+              if (usdtRate && fxRate) amountUsd = (amount * usdtRate) / fxRate;
+              else amountUsd = amount;
+            } else if (m.currency === "ARS") {
+              if (fxRate) amountUsd = amount / fxRate;
+            }
+
+            if (amountUsd === null) continue;
+
+            saleAccreditedIncome[saleId] =
+              (saleAccreditedIncome[saleId] || 0) + amountUsd;
+          }
+        }
+      }
+
+      const enrichedSales = (salesData || []).map((sale) => ({
+        ...sale,
+        accredited_total_usd:
+          saleAccreditedIncome[sale.id] ?? Number(sale.total_usd || 0),
+      }));
+
+      const rows = enrichedSales.map((sale) => {
+        const items = sale.sale_items || [];
+        const labels = items
+          .map(
+            (it) =>
+              `${it.product_name}${it.variant_name ? ` - ${it.variant_name}` : ""}`,
+          )
+          .join(", ");
+        const totalQty = items.reduce(
+          (sum, it) => sum + Number(it.quantity || 0),
+          0,
+        );
+        const totalSale = Number(
+          sale.accredited_total_usd ?? sale.total_usd ?? 0,
+        );
+        const totalCost = items.reduce(
+          (sum, it) =>
+            sum + Number(it.quantity || 0) * Number(it.cost_price_usd ?? 0),
+          0,
+        );
+        const net = totalSale - totalCost;
+
+        return {
+          Fecha: new Date(sale.sale_date).toLocaleDateString("es-AR"),
+          "Venta ID": sale.id,
+          Producto: labels || "-",
+          Canal: sale.sales_channels?.name || "-",
+          Cantidad: totalQty,
+          Cotización: Number(sale.fx_rate_used ?? 0),
+          "Total Vta (USD)": totalSale,
+          "Costo Total (USD)": totalCost,
+          "Ganancia Neta (USD)": net,
+        };
+      });
+
+      if (format === "excel") {
+        const ws = XLSX.utils.json_to_sheet(rows);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, `Ventas ${monthKey.replace(/\//g, "-")}`);
+
+        ws["!cols"] = [
+          { wch: 12 },
+          { wch: 10 },
+          { wch: 40 },
+          { wch: 16 },
+          { wch: 10 },
+          { wch: 14 },
+          { wch: 16 },
+          { wch: 16 },
+          { wch: 18 },
+        ];
+
+        XLSX.writeFile(wb, `ventas_${monthKey}.xlsx`);
+        toast.success("Excel exportado correctamente");
+      } else if (format === "pdf") {
+        const doc = new jsPDF({ orientation: "landscape" });
+
+        doc.setFontSize(14);
+        doc.text(`Ventas del período ${monthKey}`, 14, 15);
+
+        const tableData = enrichedSales.map((sale) => {
+          const items = sale.sale_items || [];
+          const labels = items
+            .map(
+              (it) =>
+                `${it.product_name}${it.variant_name ? ` - ${it.variant_name}` : ""}`,
+            )
+            .join(", ");
+          const totalQty = items.reduce(
+            (sum, it) => sum + Number(it.quantity || 0),
+            0,
+          );
+          const totalSale = Number(
+            sale.accredited_total_usd ?? sale.total_usd ?? 0,
+          );
+          const totalCost = items.reduce(
+            (sum, it) =>
+              sum + Number(it.quantity || 0) * Number(it.cost_price_usd ?? 0),
+            0,
+          );
+          const net = totalSale - totalCost;
+
+          return [
+            new Date(sale.sale_date).toLocaleDateString("es-AR"),
+            `#${sale.id}`,
+            labels?.substring(0, 50) || "-",
+            sale.sales_channels?.name || "-",
+            String(totalQty),
+            formatCurrency(totalSale, "USD"),
+            formatCurrency(totalCost, "USD"),
+            formatCurrency(net, "USD"),
+          ];
+        });
+
+        autoTable(doc, {
+          startY: 22,
+          head: [
+            [
+              "Fecha",
+              "ID",
+              "Producto",
+              "Canal",
+              "Cant.",
+              "Total Vta",
+              "Costo",
+              "Ganancia Neta",
+            ],
+          ],
+          body: tableData,
+          theme: "grid",
+          headStyles: { fillColor: [16, 185, 129] },
+          styles: { fontSize: 7 },
+          columnStyles: {
+            0: { cellWidth: 20 },
+            1: { cellWidth: 12 },
+            2: { cellWidth: 55 },
+            3: { cellWidth: 25 },
+            4: { halign: "right", cellWidth: 12 },
+            5: { halign: "right", cellWidth: 25 },
+            6: { halign: "right", cellWidth: 25 },
+            7: { halign: "right", cellWidth: 25 },
+          },
+        });
+
+        doc.save(`ventas_${monthKey}.pdf`);
+        toast.success("PDF exportado correctamente");
+      }
+
+      setExportDialogOpen(false);
+    },
+    [selectedSalesChannels, fxRate, usdtRate],
+  );
+
   const toggleSalesChannelFilter = (channelId) => {
     setSelectedSalesChannels((current) =>
       current.includes(channelId)
@@ -906,6 +1179,23 @@ export default function FinancePage() {
               <IconRefresh className="h-4 w-4" />
               {monthlyNetIncomeLoading ? "Actualizando..." : "Actualizar"}
             </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="icon">
+                  <IconDotsVertical className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => openExportDialog("excel")}>
+                  <IconTableExport className="mr-2 h-4 w-4" />
+                  Exportar como Excel
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => openExportDialog("pdf")}>
+                  <IconPdf className="mr-2 h-4 w-4" />
+                  Exportar como PDF
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </CardHeader>
         <CardContent>
@@ -1248,6 +1538,46 @@ export default function FinancePage() {
               </div>
             )}
           </ScrollArea>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={exportDialogOpen} onOpenChange={setExportDialogOpen}>
+        <DialogContent className="sm:max-w-md rounded-2xl p-4 sm:p-6">
+          <DialogHeader>
+            <DialogTitle>
+              Exportar {exportFormat === "excel" ? "Excel" : "PDF"}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="flex flex-col gap-4 pt-2">
+            <div className="grid gap-1">
+              <span className="text-sm text-muted-foreground">
+                Seleccioná el mes a exportar
+              </span>
+              <Select
+                value={exportTargetMonth}
+                onValueChange={setExportTargetMonth}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Elegí un mes" />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableExportMonths.map((month) => (
+                    <SelectItem key={month} value={month}>
+                      {month}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <Button
+              disabled={!exportTargetMonth}
+              onClick={() =>
+                loadDetailAndExport(exportTargetMonth, exportFormat)
+              }
+            >
+              Exportar
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

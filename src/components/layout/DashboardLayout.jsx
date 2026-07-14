@@ -37,7 +37,7 @@ const navMainBase = [
   { title: "Postventa", url: "/dashboard/after-sales", icon: IconTool },
   { title: "Finanzas", url: "/dashboard/finance", icon: IconBuildingBank },
   { title: "Movimientos", url: "/dashboard/movements", icon: IconCash },
-  { title: "Reportes", url: "/dashboard/reports", icon: IconChartBar },
+  // { title: "Reportes", url: "/dashboard/reports", icon: IconChartBar },
 ];
 
 const navSecondary = [
@@ -70,7 +70,7 @@ export default function DashboardLayout() {
     "/dashboard/after-sales": "Postventa",
     "/dashboard/finance": "Finanzas",
     "/dashboard/movements": "Movimientos",
-    "/dashboard/reports": "Reportes",
+    // "/dashboard/reports": "Reportes",
     "/dashboard/settings/expenses": "Gastos",
     "/dashboard/settings/movements": "Movimientos",
   };
