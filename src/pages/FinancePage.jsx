@@ -451,7 +451,7 @@ export default function FinancePage() {
 
     let salesQuery = supabase
       .from("sales")
-      .select(`id,sale_date,total_usd,fx_rate_used,sales_channels(name),sale_items(product_name,variant_name,quantity,usd_price,cost_price_usd,subtotal_usd)`)
+      .select(`id,sale_date,total_usd,fx_rate_used,seller_id,sales_channels(name),sale_items(product_name,variant_name,quantity,usd_price,cost_price_usd,subtotal_usd,commission_pct,commission_fixed)`)
       .eq("status", "vendido")
       .is("voided_at", null)
       .gte("sale_date", monthStart)
@@ -490,7 +490,20 @@ export default function FinancePage() {
     }
 
     const saleIds = (salesData || []).map((s) => s.id);
+    const uniqueSellerIds = [...new Set((salesData || []).map((s) => s.seller_id).filter(Boolean))];
     const saleAccreditedIncome = {};
+    const sellerRoleMap = {};
+
+    if (uniqueSellerIds.length > 0) {
+      const { data: sellerUsers } = await supabase
+        .from("users")
+        .select("id_auth, role")
+        .in("id_auth", uniqueSellerIds);
+
+      (sellerUsers || []).forEach((u) => {
+        sellerRoleMap[u.id_auth] = u.role;
+      });
+    }
 
     if (saleIds.length > 0) {
       const { data: paymentsData } = await supabase
@@ -547,11 +560,27 @@ export default function FinancePage() {
       }
     }
 
-    const enrichedSales = (salesData || []).map((sale) => ({
-      ...sale,
-      accredited_total_usd:
-        saleAccreditedIncome[sale.id] ?? Number(sale.total_usd || 0),
-    }));
+    const enrichedSales = (salesData || []).map((sale) => {
+      const sellerRole = sellerRoleMap[sale.seller_id];
+      let commissionUsd = null;
+      if (sellerRole === "seller") {
+        commissionUsd = (sale.sale_items || []).reduce((sum, it) => {
+          const qty = Number(it.quantity || 0);
+          const price = Number(it.usd_price || 0);
+          const pct = it.commission_pct;
+          const fixed = it.commission_fixed;
+          if (pct != null) return sum + price * qty * (Number(pct) / 100);
+          if (fixed != null) return sum + Number(fixed) * qty;
+          return sum;
+        }, 0);
+      }
+      return {
+        ...sale,
+        accredited_total_usd:
+          saleAccreditedIncome[sale.id] ?? Number(sale.total_usd || 0),
+        commission_usd: commissionUsd,
+      };
+    });
 
     setDetailSales(enrichedSales);
     setDetailLoading(false);
@@ -579,7 +608,7 @@ export default function FinancePage() {
       let salesQuery = supabase
         .from("sales")
         .select(
-          `id,sale_date,total_usd,fx_rate_used,sales_channels(name),sale_items(product_name,variant_name,quantity,usd_price,cost_price_usd,subtotal_usd)`,
+          `id,sale_date,total_usd,fx_rate_used,seller_id,sales_channels(name),sale_items(product_name,variant_name,quantity,usd_price,cost_price_usd,subtotal_usd,commission_pct,commission_fixed)`,
         )
         .eq("status", "vendido")
         .is("voided_at", null)
@@ -617,7 +646,20 @@ export default function FinancePage() {
       }
 
       const saleIds = (salesData || []).map((s) => s.id);
+      const uniqueSellerIds = [...new Set((salesData || []).map((s) => s.seller_id).filter(Boolean))];
       const saleAccreditedIncome = {};
+      const sellerRoleMap = {};
+
+      if (uniqueSellerIds.length > 0) {
+        const { data: sellerUsers } = await supabase
+          .from("users")
+          .select("id_auth, role")
+          .in("id_auth", uniqueSellerIds);
+
+        (sellerUsers || []).forEach((u) => {
+          sellerRoleMap[u.id_auth] = u.role;
+        });
+      }
 
       if (saleIds.length > 0) {
         const { data: paymentsData } = await supabase
@@ -674,20 +716,36 @@ export default function FinancePage() {
         }
       }
 
-      const enrichedSales = (salesData || []).map((sale) => ({
-        ...sale,
-        accredited_total_usd:
-          saleAccreditedIncome[sale.id] ?? Number(sale.total_usd || 0),
-      }));
+      const enrichedSales = (salesData || []).map((sale) => {
+        const sellerRole = sellerRoleMap[sale.seller_id];
+        let commissionUsd = null;
+        if (sellerRole === "seller") {
+          commissionUsd = (sale.sale_items || []).reduce((sum, it) => {
+            const qty = Number(it.quantity || 0);
+            const price = Number(it.usd_price || 0);
+            const pct = it.commission_pct;
+            const fixed = it.commission_fixed;
+            if (pct != null) return sum + price * qty * (Number(pct) / 100);
+            if (fixed != null) return sum + Number(fixed) * qty;
+            return sum;
+          }, 0);
+        }
+        return {
+          ...sale,
+          accredited_total_usd:
+            saleAccreditedIncome[sale.id] ?? Number(sale.total_usd || 0),
+          commission_usd: commissionUsd,
+        };
+      });
 
       const rows = enrichedSales.map((sale) => {
         const items = sale.sale_items || [];
         const labels = items
           .map(
             (it) =>
-              `${it.product_name}${it.variant_name ? ` - ${it.variant_name}` : ""}`,
+              `${it.product_name}${it.variant_name ? ` - ${it.variant_name}` : ""} (x${it.quantity})`,
           )
-          .join(", ");
+          .join("\n");
         const totalQty = items.reduce(
           (sum, it) => sum + Number(it.quantity || 0),
           0,
@@ -700,7 +758,8 @@ export default function FinancePage() {
             sum + Number(it.quantity || 0) * Number(it.cost_price_usd ?? 0),
           0,
         );
-        const net = totalSale - totalCost;
+        const commission = sale.commission_usd != null ? Number(sale.commission_usd.toFixed(2)) : 0;
+        const net = totalSale - totalCost - commission;
 
         return {
           Fecha: new Date(sale.sale_date).toLocaleDateString("es-AR"),
@@ -711,6 +770,9 @@ export default function FinancePage() {
           Cotización: Number(sale.fx_rate_used ?? 0),
           "Total Vta (USD)": totalSale,
           "Costo Total (USD)": totalCost,
+          "Comisión (USD)": sale.commission_usd != null
+            ? commission
+            : "No aplica",
           "Ganancia Neta (USD)": net,
         };
       });
@@ -730,6 +792,7 @@ export default function FinancePage() {
           { wch: 16 },
           { wch: 16 },
           { wch: 18 },
+          { wch: 16 },
         ];
 
         XLSX.writeFile(wb, `ventas_${monthKey}.xlsx`);
@@ -745,9 +808,9 @@ export default function FinancePage() {
           const labels = items
             .map(
               (it) =>
-                `${it.product_name}${it.variant_name ? ` - ${it.variant_name}` : ""}`,
+                `${it.product_name}${it.variant_name ? ` - ${it.variant_name}` : ""} (x${it.quantity})`,
             )
-            .join(", ");
+            .join("\n");
           const totalQty = items.reduce(
             (sum, it) => sum + Number(it.quantity || 0),
             0,
@@ -760,16 +823,20 @@ export default function FinancePage() {
               sum + Number(it.quantity || 0) * Number(it.cost_price_usd ?? 0),
             0,
           );
-          const net = totalSale - totalCost;
+          const commission = sale.commission_usd != null ? Number(sale.commission_usd.toFixed(2)) : 0;
+          const net = totalSale - totalCost - commission;
 
           return [
             new Date(sale.sale_date).toLocaleDateString("es-AR"),
             `#${sale.id}`,
-            labels?.substring(0, 50) || "-",
+            labels || "-",
             sale.sales_channels?.name || "-",
             String(totalQty),
             formatCurrency(totalSale, "USD"),
             formatCurrency(totalCost, "USD"),
+            sale.commission_usd != null
+              ? formatCurrency(sale.commission_usd, "USD")
+              : "No aplica",
             formatCurrency(net, "USD"),
           ];
         });
@@ -785,22 +852,24 @@ export default function FinancePage() {
               "Cant.",
               "Total Vta",
               "Costo",
+              "Comisión",
               "Ganancia Neta",
             ],
           ],
           body: tableData,
           theme: "grid",
           headStyles: { fillColor: [16, 185, 129] },
-          styles: { fontSize: 7 },
+          styles: { fontSize: 7, cellPadding: 2 },
           columnStyles: {
             0: { cellWidth: 20 },
             1: { cellWidth: 12 },
-            2: { cellWidth: 55 },
+            2: { cellWidth: 70, overflow: "linebreak" },
             3: { cellWidth: 25 },
             4: { halign: "right", cellWidth: 12 },
             5: { halign: "right", cellWidth: 25 },
             6: { halign: "right", cellWidth: 25 },
             7: { halign: "right", cellWidth: 25 },
+            8: { halign: "right", cellWidth: 25 },
           },
         });
 
@@ -1459,6 +1528,7 @@ export default function FinancePage() {
                       <TableHead className="text-right">Cotización</TableHead>
                       <TableHead className="text-right">Total Vta</TableHead>
                       <TableHead className="text-right">Costo Total</TableHead>
+                      <TableHead className="text-right">Comisión</TableHead>
                       <TableHead className="text-right bg-emerald-50/70 text-emerald-800">
                         Ganancia Neta
                       </TableHead>
@@ -1470,9 +1540,9 @@ export default function FinancePage() {
                       const labels = items
                         .map(
                           (it) =>
-                            `${it.product_name}${it.variant_name ? ` - ${it.variant_name}` : ""}`,
+                            `${it.product_name}${it.variant_name ? ` - ${it.variant_name}` : ""} (x${it.quantity})`,
                         )
-                        .join(", ");
+                        .join("\n");
                       const totalQty = items.reduce(
                         (sum, it) => sum + Number(it.quantity || 0),
                         0,
@@ -1487,7 +1557,8 @@ export default function FinancePage() {
                             Number(it.cost_price_usd ?? 0),
                         0,
                       );
-                      const net = totalSale - totalCost;
+                      const commission = sale.commission_usd != null ? Number(sale.commission_usd.toFixed(2)) : 0;
+                      const net = totalSale - totalCost - commission;
 
                       return (
                         <TableRow key={sale.id}>
@@ -1500,7 +1571,7 @@ export default function FinancePage() {
                             #{sale.id}
                           </TableCell>
                           <TableCell
-                            className="max-w-[240px] truncate"
+                            className="max-w-[240px] whitespace-pre-line"
                             title={labels}
                           >
                             {labels || "-"}
@@ -1522,6 +1593,11 @@ export default function FinancePage() {
                           </TableCell>
                           <TableCell className="text-right">
                             {formatCurrency(totalCost, "USD")}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {sale.commission_usd != null
+                              ? formatCurrency(sale.commission_usd, "USD")
+                              : "No aplica"}
                           </TableCell>
                           <TableCell
                             className={`text-right font-semibold ${
