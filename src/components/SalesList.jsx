@@ -1680,8 +1680,11 @@ export function SalesList() {
                                         variant={
                                             s.status === "anulado" ? "destructive" : "default"
                                         }
+                                        className={
+                                            s.status === "pending" ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-950/20 dark:text-yellow-400" : ""
+                                        }
                                     >
-                                        {s.status === "anulado" ? "ANULADA" : s.status}
+                                        {s.status === "anulado" ? "ANULADA" : s.status === "pending" ? "PENDIENTE" : s.status}
                                     </Badge>
                                 </div>
                             )}

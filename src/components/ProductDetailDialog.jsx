@@ -277,10 +277,10 @@ export default function ProductDetailDialog({
                   <span className="font-semibold">Stock:</span>{" "}
                   <Badge
                     variant={
-                      firstVariant?.stock === 0 ? "destructive" : "secondary"
+                      (selectedGroup?.variants?.reduce((sum, v) => sum + Number(v.stock || 0), 0) ?? 0) === 0 ? "destructive" : "secondary"
                     }
                   >
-                    {firstVariant?.stock ?? 0}
+                    {selectedGroup?.variants?.reduce((sum, v) => sum + Number(v.stock || 0), 0) ?? 0}
                   </Badge>
                 </p>
               </div>
