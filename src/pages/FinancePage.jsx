@@ -290,6 +290,7 @@ export default function FinancePage() {
         sale_date,
         status,
         total_usd,
+        fx_rate_used,
         sales_channel_id,
         sale_items(
           id,
@@ -338,6 +339,9 @@ export default function FinancePage() {
     // Obtener el ingreso real acreditado desde account_movements
     const saleIds = (salesData || []).map((s) => s.id);
     const saleAccreditedIncome = {};
+    const saleFxRateMap = new Map(
+      (salesData || []).map((s) => [s.id, Number(s.fx_rate_used || 0)]),
+    );
 
     if (saleIds.length > 0) {
       const { data: paymentsData } = await supabase
@@ -376,14 +380,16 @@ export default function FinancePage() {
           const amount = Number(m.amount || 0);
           if (!amount) continue;
 
+          const saleRate = saleFxRateMap.get(saleId) || fxRate;
+
           let amountUsd = null;
           if (m.currency === "USD") {
             amountUsd = amount;
           } else if (m.currency === "USDT") {
-            if (usdtRate && fxRate) amountUsd = (amount * usdtRate) / fxRate;
+            if (usdtRate && saleRate) amountUsd = (amount * usdtRate) / saleRate;
             else amountUsd = amount;
           } else if (m.currency === "ARS") {
-            if (fxRate) amountUsd = amount / fxRate;
+            if (saleRate) amountUsd = amount / saleRate;
           }
 
           if (amountUsd === null) continue;
@@ -493,6 +499,9 @@ export default function FinancePage() {
     const uniqueSellerIds = [...new Set((salesData || []).map((s) => s.seller_id).filter(Boolean))];
     const saleAccreditedIncome = {};
     const sellerRoleMap = {};
+    const saleFxRateMap = new Map(
+      (salesData || []).map((s) => [s.id, Number(s.fx_rate_used || 0)]),
+    );
 
     if (uniqueSellerIds.length > 0) {
       const { data: sellerUsers } = await supabase
@@ -542,14 +551,16 @@ export default function FinancePage() {
           const amount = Number(m.amount || 0);
           if (!amount) continue;
 
+          const saleRate = saleFxRateMap.get(saleId) || fxRate;
+
           let amountUsd = null;
           if (m.currency === "USD") {
             amountUsd = amount;
           } else if (m.currency === "USDT") {
-            if (usdtRate && fxRate) amountUsd = (amount * usdtRate) / fxRate;
+            if (usdtRate && saleRate) amountUsd = (amount * usdtRate) / saleRate;
             else amountUsd = amount;
           } else if (m.currency === "ARS") {
-            if (fxRate) amountUsd = amount / fxRate;
+            if (saleRate) amountUsd = amount / saleRate;
           }
 
           if (amountUsd === null) continue;
@@ -649,6 +660,9 @@ export default function FinancePage() {
       const uniqueSellerIds = [...new Set((salesData || []).map((s) => s.seller_id).filter(Boolean))];
       const saleAccreditedIncome = {};
       const sellerRoleMap = {};
+      const saleFxRateMap = new Map(
+        (salesData || []).map((s) => [s.id, Number(s.fx_rate_used || 0)]),
+      );
 
       if (uniqueSellerIds.length > 0) {
         const { data: sellerUsers } = await supabase
@@ -692,21 +706,23 @@ export default function FinancePage() {
             )
               continue;
 
-            const saleId = paymentToSale.get(m.related_id);
-            if (!saleId) continue;
+          const saleId = paymentToSale.get(m.related_id);
+          if (!saleId) continue;
 
-            const amount = Number(m.amount || 0);
-            if (!amount) continue;
+          const amount = Number(m.amount || 0);
+          if (!amount) continue;
 
-            let amountUsd = null;
-            if (m.currency === "USD") {
-              amountUsd = amount;
-            } else if (m.currency === "USDT") {
-              if (usdtRate && fxRate) amountUsd = (amount * usdtRate) / fxRate;
-              else amountUsd = amount;
-            } else if (m.currency === "ARS") {
-              if (fxRate) amountUsd = amount / fxRate;
-            }
+          const saleRate = saleFxRateMap.get(saleId) || fxRate;
+
+          let amountUsd = null;
+          if (m.currency === "USD") {
+            amountUsd = amount;
+          } else if (m.currency === "USDT") {
+            if (usdtRate && saleRate) amountUsd = (amount * usdtRate) / saleRate;
+            else amountUsd = amount;
+          } else if (m.currency === "ARS") {
+            if (saleRate) amountUsd = amount / saleRate;
+          }
 
             if (amountUsd === null) continue;
 
@@ -849,7 +865,7 @@ export default function FinancePage() {
               "ID",
               "Producto",
               "Canal",
-              "Cant.",
+              "Items",
               "Total Vta",
               "Costo",
               "Comisión",
@@ -1524,7 +1540,7 @@ export default function FinancePage() {
                       <TableHead className="text-right">Venta ID</TableHead>
                       <TableHead>Producto</TableHead>
                       <TableHead>Canal</TableHead>
-                      <TableHead className="text-right">Cant.</TableHead>
+                      <TableHead className="text-right">Items</TableHead>
                       <TableHead className="text-right">Cotización</TableHead>
                       <TableHead className="text-right">Total Vta</TableHead>
                       <TableHead className="text-right">Costo Total</TableHead>
