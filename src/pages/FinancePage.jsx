@@ -275,12 +275,8 @@ export default function FinancePage() {
 
   const loadMonthlyNetIncome = useCallback(async () => {
     setMonthlyNetIncomeLoading(true);
-    const yearStart = new Date(`${selectedYear}-01-01`)
-      .toISOString()
-      .split("T")[0];
-    const yearEnd = new Date(`${selectedYear}-12-31`)
-      .toISOString()
-      .split("T")[0];
+    const yearStart = `${selectedYear}-01-01`;
+    const nextYearStart = `${selectedYear + 1}-01-01`;
 
     let salesQuery = supabase
       .from("sales")
@@ -304,7 +300,7 @@ export default function FinancePage() {
       .eq("status", "vendido")
       .is("voided_at", null)
       .gte("sale_date", yearStart)
-      .lte("sale_date", yearEnd);
+      .lt("sale_date", nextYearStart);
 
     if (
       selectedSalesChannels.length === 1 &&
@@ -452,8 +448,10 @@ export default function FinancePage() {
     const [month, year] = monthKey.split("/");
     const paddedMonth = month.padStart(2, "0");
     const monthStart = `${year}-${paddedMonth}-01`;
-    const lastDay = new Date(Number(year), Number(month), 0).getDate();
-    const monthEnd = `${year}-${paddedMonth}-${String(lastDay).padStart(2, "0")}`;
+    const nextMonth = Number(month) + 1;
+    const nextMonthYear = nextMonth > 12 ? Number(year) + 1 : Number(year);
+    const nextMonthPadded = nextMonth > 12 ? "01" : String(nextMonth).padStart(2, "0");
+    const nextMonthStart = `${nextMonthYear}-${nextMonthPadded}-01`;
 
     let salesQuery = supabase
       .from("sales")
@@ -461,7 +459,7 @@ export default function FinancePage() {
       .eq("status", "vendido")
       .is("voided_at", null)
       .gte("sale_date", monthStart)
-      .lte("sale_date", monthEnd);
+      .lt("sale_date", nextMonthStart);
 
     if (
       selectedSalesChannels.length === 1 &&
@@ -613,8 +611,10 @@ export default function FinancePage() {
       const [month, year] = monthKey.split("/");
       const paddedMonth = month.padStart(2, "0");
       const monthStart = `${year}-${paddedMonth}-01`;
-      const lastDay = new Date(Number(year), Number(month), 0).getDate();
-      const monthEnd = `${year}-${paddedMonth}-${String(lastDay).padStart(2, "0")}`;
+      const nextMonth = Number(month) + 1;
+      const nextMonthYear = nextMonth > 12 ? Number(year) + 1 : Number(year);
+      const nextMonthPadded = nextMonth > 12 ? "01" : String(nextMonth).padStart(2, "0");
+      const nextMonthStart = `${nextMonthYear}-${nextMonthPadded}-01`;
 
       let salesQuery = supabase
         .from("sales")
@@ -624,7 +624,7 @@ export default function FinancePage() {
         .eq("status", "vendido")
         .is("voided_at", null)
         .gte("sale_date", monthStart)
-        .lte("sale_date", monthEnd);
+        .lt("sale_date", nextMonthStart);
 
       if (
         selectedSalesChannels.length === 1 &&
