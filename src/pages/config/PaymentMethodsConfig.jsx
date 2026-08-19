@@ -44,6 +44,7 @@ import {
 
 export default function PaymentMethodsConfig() {
   const [methods, setMethods] = useState([]);
+  const [accounts, setAccounts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState("active");
   const [methodModal, setMethodModal] = useState({
@@ -52,6 +53,7 @@ export default function PaymentMethodsConfig() {
     name: "",
     percent: 0,
     accreditationDelayBusinessDays: 0,
+    accountId: "",
   });
   const [installmentModal, setInstallmentModal] = useState({
     open: false,
@@ -73,7 +75,7 @@ export default function PaymentMethodsConfig() {
     let query = supabase
       .from("payment_methods")
       .select(
-        "id, name, multiplier, is_active, accreditation_delay_business_days, payment_installments(id, installments, multiplier, description)"
+        "id, name, multiplier, is_active, account_id, accreditation_delay_business_days, payment_installments(id, installments, multiplier, description)"
       )
       .order("id");
 
@@ -96,13 +98,27 @@ export default function PaymentMethodsConfig() {
     setLoading(false);
   };
 
+  const fetchAccounts = async () => {
+    const { data, error } = await supabase
+      .from("accounts")
+      .select("id, name, currency, is_efectivo, is_caja_virtual")
+      .order("name", { ascending: true });
+
+    if (error) {
+      toast.error("No se pudieron cargar las cuentas", { description: error.message });
+      return;
+    }
+    setAccounts(data || []);
+  };
+
   useEffect(() => {
     fetchMethods();
+    fetchAccounts();
   }, [statusFilter]);
 
   // ?? Guardar o actualizar método
   const handleSaveMethod = async () => {
-    const { name, percent, editId, accreditationDelayBusinessDays } =
+    const { name, percent, editId, accreditationDelayBusinessDays, accountId } =
       methodModal;
     if (!name) {
       // ?? REEMPLAZO 2: Usar toast para campos requeridos
@@ -120,6 +136,7 @@ export default function PaymentMethodsConfig() {
         Number(accreditationDelayBusinessDays || 0),
         0
       ),
+      account_id: accountId ? Number(accountId) : null,
     };
 
     let error;
@@ -154,6 +171,7 @@ export default function PaymentMethodsConfig() {
         name: "",
         percent: 0,
         accreditationDelayBusinessDays: 0,
+        accountId: "",
       });
       fetchMethods();
     }
@@ -323,6 +341,7 @@ export default function PaymentMethodsConfig() {
                       editId: method.id,
                       name: method.name,
                       percent: ((method.multiplier - 1) * 100).toFixed(2),
+                      accountId: method.account_id ? String(method.account_id) : "",
                       accreditationDelayBusinessDays:
                         method.accreditation_delay_business_days ?? 0,
                     })
@@ -370,6 +389,9 @@ export default function PaymentMethodsConfig() {
                   </b>
                 </p>
               </div>
+              <p className="text-sm text-muted-foreground">
+                Cuenta: <b>{accounts.find((account) => account.id === method.account_id)?.name || "Sin configurar"}</b>
+              </p>
 
               <div className="space-y-2">
                 <p className="font-medium">Cuotas:</p>
@@ -539,6 +561,30 @@ export default function PaymentMethodsConfig() {
                 Usar 0 para acreditacion inmediata y 2 para postnet con demora.
               </p>
             </div>
+            <div className="grid gap-2">
+              <Label>Cuenta de acreditación</Label>
+              <Select
+                value={methodModal.accountId || "none"}
+                onValueChange={(value) =>
+                  setMethodModal((p) => ({ ...p, accountId: value === "none" ? "" : value }))
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Seleccioná una cuenta" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Sin configurar</SelectItem>
+                  {accounts.map((account) => (
+                    <SelectItem key={account.id} value={String(account.id)}>
+                      {account.name} ({account.currency})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                La cuenta recibirá el importe neto acreditado de este método.
+              </p>
+            </div>
           </div>
 
           <DialogFooter className="flex flex-col sm:flex-row sm:justify-end gap-2">
@@ -548,9 +594,10 @@ export default function PaymentMethodsConfig() {
                 setMethodModal({
                   open: false,
                   editId: null,
-                  name: "",
-                  percent: 0,
-                  accreditationDelayBusinessDays: 0,
+                   name: "",
+                   percent: 0,
+                   accreditationDelayBusinessDays: 0,
+                   accountId: "",
                 })
               }
             >
