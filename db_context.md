@@ -1,55 +1,6 @@
 -- WARNING: This schema is for context only and is not meant to be run.
 -- Table order and constraints may not be valid for execution.
 
-CREATE TABLE public.account_movements (
-  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  movement_date date NOT NULL DEFAULT CURRENT_DATE,
-  account_id bigint NOT NULL,
-  type text NOT NULL CHECK (type = ANY (ARRAY['income'::text, 'expense'::text, 'transfer'::text])),
-  amount numeric NOT NULL,
-  currency text NOT NULL CHECK (currency = ANY (ARRAY['ARS'::text, 'USD'::text, 'USDT'::text])),
-  amount_ars numeric,
-  fx_rate_used numeric,
-  related_table text,
-  related_id bigint,
-  notes text,
-  CONSTRAINT account_movements_pkey PRIMARY KEY (id),
-  CONSTRAINT account_movements_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id)
-);
-CREATE TABLE public.accounts (
-  id bigint NOT NULL DEFAULT nextval('accounts_id_seq'::regclass),
-  name text NOT NULL,
-  currency text NOT NULL CHECK (currency = ANY (ARRAY['ARS'::text, 'USD'::text, 'USDT'::text])),
-  initial_balance numeric NOT NULL DEFAULT 0,
-  notes text,
-  include_in_balance boolean NOT NULL DEFAULT true,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  is_reference_capital boolean NOT NULL DEFAULT false,
-  CONSTRAINT accounts_pkey PRIMARY KEY (id)
-);
-CREATE TABLE public.aftersales_devices (
-  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
-  variant_id integer NOT NULL,
-  sale_id bigint,
-  warranty_exchange_id bigint,
-  source_type text NOT NULL CHECK (source_type = ANY (ARRAY['factory'::text, 'warranty'::text])),
-  imei text,
-  quantity integer NOT NULL DEFAULT 1,
-  status text NOT NULL DEFAULT 'defective_in_store'::text CHECK (status = ANY (ARRAY['defective_in_store'::text, 'in_repair'::text, 'repaired'::text])),
-  notes text,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  updated_at timestamp with time zone NOT NULL DEFAULT now(),
-  created_by uuid DEFAULT auth.uid(),
-  include_in_stock_cost_balance boolean NOT NULL DEFAULT false,
-  sold_sale_id bigint,
-  sold_at timestamp with time zone,
-  CONSTRAINT aftersales_devices_pkey PRIMARY KEY (id),
-  CONSTRAINT aftersales_devices_variant_id_fkey FOREIGN KEY (variant_id) REFERENCES public.product_variants(id),
-  CONSTRAINT aftersales_devices_sale_id_fkey FOREIGN KEY (sale_id) REFERENCES public.sales(id),
-  CONSTRAINT aftersales_devices_warranty_exchange_id_fkey FOREIGN KEY (warranty_exchange_id) REFERENCES public.warranty_exchanges(id),
-  CONSTRAINT aftersales_devices_sold_sale_id_fkey FOREIGN KEY (sold_sale_id) REFERENCES public.sales(id)
-);
 CREATE TABLE public.brands (
   id integer NOT NULL DEFAULT nextval('brands_id_seq'::regclass),
   name text NOT NULL UNIQUE,
@@ -60,86 +11,32 @@ CREATE TABLE public.categories (
   name text NOT NULL UNIQUE,
   CONSTRAINT categories_pkey PRIMARY KEY (id)
 );
-CREATE TABLE public.commission_payments (
-  id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
-  seller_id uuid NOT NULL,
-  period_start date NOT NULL,
-  period_end date NOT NULL,
-  total_amount numeric NOT NULL,
-  paid_at timestamp with time zone,
-  notes text,
-  CONSTRAINT commission_payments_pkey PRIMARY KEY (id),
-  CONSTRAINT commission_payments_seller_id_fkey FOREIGN KEY (seller_id) REFERENCES public.user_roles(id_auth)
+CREATE TABLE public.payment_methods (
+  id integer NOT NULL DEFAULT nextval('payment_methods_id_seq'::regclass),
+  name text NOT NULL UNIQUE,
+  multiplier numeric NOT NULL DEFAULT 1,
+  is_active boolean NOT NULL DEFAULT true,
+  accreditation_delay_business_days integer NOT NULL DEFAULT 0 CHECK (accreditation_delay_business_days >= 0),
+  CONSTRAINT payment_methods_pkey PRIMARY KEY (id)
 );
-CREATE TABLE public.commission_rules (
-  id integer NOT NULL DEFAULT nextval('commission_rules_id_seq'::regclass),
-  category_id integer,
+CREATE TABLE public.products (
+  id integer NOT NULL DEFAULT nextval('products_id_seq'::regclass),
+  name text NOT NULL,
   brand_id integer,
+  category_id integer NOT NULL,
+  usd_price numeric,
   commission_pct numeric,
   commission_fixed numeric,
-  priority integer NOT NULL DEFAULT 100,
-  CONSTRAINT commission_rules_pkey PRIMARY KEY (id),
-  CONSTRAINT commission_rules_category_id_fkey FOREIGN KEY (category_id) REFERENCES public.categories(id),
-  CONSTRAINT commission_rules_brand_id_fkey FOREIGN KEY (brand_id) REFERENCES public.brands(id)
-);
-CREATE TABLE public.customers (
-  id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  updated_at timestamp with time zone NOT NULL DEFAULT now(),
-  name text NOT NULL,
-  last_name text,
-  dni text UNIQUE,
-  phone text,
-  email text,
-  address text,
-  city text,
-  notes text,
-  is_active boolean NOT NULL DEFAULT true,
-  CONSTRAINT customers_pkey PRIMARY KEY (id)
-);
-CREATE TABLE public.expenses (
-  id bigint NOT NULL DEFAULT nextval('expenses_id_seq'::regclass),
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  expense_date date NOT NULL,
-  amount numeric NOT NULL,
-  currency text NOT NULL CHECK (currency = ANY (ARRAY['ARS'::text, 'USD'::text, 'USDT'::text])),
-  amount_ars numeric NOT NULL,
-  fx_rate_used numeric,
-  account_id bigint,
-  category text,
-  type text NOT NULL CHECK (type = ANY (ARRAY['fixed'::text, 'variable'::text])),
-  notes text,
-  fixed_expense_id bigint,
-  frequency_value integer,
-  frequency_unit text,
-  last_paid_at timestamp with time zone,
-  is_active boolean NOT NULL DEFAULT true,
-  CONSTRAINT expenses_pkey PRIMARY KEY (id),
-  CONSTRAINT expenses_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id),
-  CONSTRAINT expenses_fixed_expense_id_fkey FOREIGN KEY (fixed_expense_id) REFERENCES public.fixed_expenses(id)
-);
-CREATE TABLE public.finance_categories (
-  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
-  name text NOT NULL,
-  type text NOT NULL CHECK (type = ANY (ARRAY['expense'::text, 'income'::text])),
-  is_active boolean NOT NULL DEFAULT true,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  CONSTRAINT finance_categories_pkey PRIMARY KEY (id)
-);
-CREATE TABLE public.fixed_expenses (
-  id bigint NOT NULL DEFAULT nextval('fixed_expenses_id_seq'::regclass),
-  name text NOT NULL,
-  amount numeric NOT NULL,
-  currency text NOT NULL CHECK (currency = ANY (ARRAY['ARS'::text, 'USD'::text, 'USDT'::text])),
-  account_id bigint,
-  category text,
-  due_day integer,
-  notes text,
-  is_active boolean NOT NULL DEFAULT true,
-  last_paid_at timestamp with time zone,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  CONSTRAINT fixed_expenses_pkey PRIMARY KEY (id),
-  CONSTRAINT fixed_expenses_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id)
+  allow_backorder boolean NOT NULL DEFAULT false,
+  lead_time_label text,
+  active boolean NOT NULL DEFAULT true,
+  cover_image_url text,
+  created_at timestamp without time zone DEFAULT now(),
+  deposit_amount real,
+  inventory_tracking_mode text NOT NULL DEFAULT 'quantity'::text CHECK (inventory_tracking_mode = ANY (ARRAY['quantity'::text, 'serial'::text])),
+  CONSTRAINT products_pkey PRIMARY KEY (id),
+  CONSTRAINT products_brand_id_fkey FOREIGN KEY (brand_id) REFERENCES public.brands(id),
+  CONSTRAINT products_category_id_fkey FOREIGN KEY (category_id) REFERENCES public.categories(id)
 );
 CREATE TABLE public.fx_rates (
   id integer NOT NULL DEFAULT nextval('fx_rates_id_seq'::regclass),
@@ -152,25 +49,32 @@ CREATE TABLE public.fx_rates (
   notes text,
   CONSTRAINT fx_rates_pkey PRIMARY KEY (id)
 );
-CREATE TABLE public.leads (
-  id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
+CREATE TABLE public.commission_rules (
+  id integer NOT NULL DEFAULT nextval('commission_rules_id_seq'::regclass),
+  category_id integer,
+  brand_id integer,
+  commission_pct numeric,
+  commission_fixed numeric,
+  priority integer NOT NULL DEFAULT 100,
+  CONSTRAINT commission_rules_pkey PRIMARY KEY (id),
+  CONSTRAINT commission_rules_category_id_fkey FOREIGN KEY (category_id) REFERENCES public.categories(id),
+  CONSTRAINT commission_rules_brand_id_fkey FOREIGN KEY (brand_id) REFERENCES public.brands(id)
+);
+CREATE TABLE public.users (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
   created_at timestamp with time zone NOT NULL DEFAULT now(),
-  updated_at timestamp with time zone NOT NULL DEFAULT now(),
-  referred_by uuid NOT NULL,
-  customer_id integer,
-  appointment_datetime timestamp with time zone,
-  qr_code text UNIQUE,
-  status text DEFAULT 'pendiente'::text,
-  notes text,
-  sale_id integer UNIQUE,
-  interested_variants jsonb,
-  product_status character varying DEFAULT 'en espera'::character varying,
-  deposit_paid boolean NOT NULL DEFAULT false,
-  deposit_amount numeric NOT NULL DEFAULT 0,
-  deposit_currency text NOT NULL DEFAULT 'ARS'::text,
-  CONSTRAINT leads_pkey PRIMARY KEY (id),
-  CONSTRAINT leads_referred_by_fkey FOREIGN KEY (referred_by) REFERENCES public.user_roles(id_auth),
-  CONSTRAINT leads_customer_id_fkey FOREIGN KEY (customer_id) REFERENCES public.customers(id)
+  name text,
+  dni text,
+  phone text,
+  email text,
+  role text CHECK (role = ANY (ARRAY['superadmin'::text, 'owner'::text, 'seller'::text])),
+  last_name text,
+  adress text,
+  is_active boolean DEFAULT false,
+  id_auth uuid DEFAULT gen_random_uuid() UNIQUE,
+  avatar_url text,
+  CONSTRAINT users_pkey PRIMARY KEY (id),
+  CONSTRAINT users_id_auth_fkey FOREIGN KEY (id_auth) REFERENCES auth.users(id)
 );
 CREATE TABLE public.payment_installments (
   id integer NOT NULL DEFAULT nextval('payment_installments_id_seq'::regclass),
@@ -180,13 +84,6 @@ CREATE TABLE public.payment_installments (
   description text,
   CONSTRAINT payment_installments_pkey PRIMARY KEY (id),
   CONSTRAINT payment_installments_payment_method_id_fkey FOREIGN KEY (payment_method_id) REFERENCES public.payment_methods(id)
-);
-CREATE TABLE public.payment_methods (
-  id integer NOT NULL DEFAULT nextval('payment_methods_id_seq'::regclass),
-  name text NOT NULL UNIQUE,
-  multiplier numeric NOT NULL DEFAULT 1,
-  is_active boolean NOT NULL DEFAULT true,
-  CONSTRAINT payment_methods_pkey PRIMARY KEY (id)
 );
 CREATE TABLE public.product_variants (
   id integer NOT NULL DEFAULT nextval('product_variants_id_seq'::regclass),
@@ -221,169 +118,56 @@ CREATE TABLE public.product_variants (
   CONSTRAINT product_variants_pkey PRIMARY KEY (id),
   CONSTRAINT product_variants_product_id_fkey FOREIGN KEY (product_id) REFERENCES public.products(id)
 );
-CREATE TABLE public.products (
-  id integer NOT NULL DEFAULT nextval('products_id_seq'::regclass),
-  name text NOT NULL,
-  brand_id integer,
-  category_id integer NOT NULL,
-  usd_price numeric,
-  commission_pct numeric,
-  commission_fixed numeric,
-  allow_backorder boolean NOT NULL DEFAULT false,
-  lead_time_label text,
-  active boolean NOT NULL DEFAULT true,
-  cover_image_url text,
-  inventory_tracking_mode text NOT NULL DEFAULT 'quantity'::text CHECK (inventory_tracking_mode = ANY (ARRAY['quantity'::text, 'serial'::text])),
-  created_at timestamp without time zone DEFAULT now(),
-  deposit_amount real,
-  CONSTRAINT products_pkey PRIMARY KEY (id),
-  CONSTRAINT products_brand_id_fkey FOREIGN KEY (brand_id) REFERENCES public.brands(id),
-  CONSTRAINT products_category_id_fkey FOREIGN KEY (category_id) REFERENCES public.categories(id)
+CREATE TABLE public.user_roles (
+  id_auth uuid NOT NULL,
+  role text CHECK (role = ANY (ARRAY['superadmin'::text, 'owner'::text, 'seller'::text])),
+  CONSTRAINT user_roles_pkey PRIMARY KEY (id_auth)
 );
-CREATE TABLE public.providers (
-  id bigint NOT NULL DEFAULT nextval('providers_id_seq'::regclass),
+CREATE TABLE public.customers (
+  id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
   name text NOT NULL,
-  contact_name text,
+  last_name text,
+  dni text UNIQUE,
   phone text,
   email text,
   address text,
   city text,
   notes text,
   is_active boolean NOT NULL DEFAULT true,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  CONSTRAINT providers_pkey PRIMARY KEY (id)
+  CONSTRAINT customers_pkey PRIMARY KEY (id)
 );
-CREATE TABLE public.purchase_items (
-  id bigint NOT NULL DEFAULT nextval('purchase_items_id_seq'::regclass),
-  purchase_id bigint,
-  variant_id integer,
-  quantity integer NOT NULL,
-  unit_cost numeric NOT NULL,
-  subtotal numeric NOT NULL,
-  CONSTRAINT purchase_items_pkey PRIMARY KEY (id),
-  CONSTRAINT purchase_items_purchase_id_fkey FOREIGN KEY (purchase_id) REFERENCES public.purchases(id),
-  CONSTRAINT purchase_items_variant_id_fkey FOREIGN KEY (variant_id) REFERENCES public.product_variants(id)
-);
-CREATE TABLE public.purchase_payments (
-  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
-  purchase_id bigint NOT NULL,
-  account_id bigint NOT NULL,
-  payment_method_id integer,
-  amount numeric NOT NULL,
-  currency text NOT NULL CHECK (currency = ANY (ARRAY['ARS'::text, 'USD'::text, 'USDT'::text])),
-  amount_ars numeric,
-  fx_rate_used numeric,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  notes text,
-  CONSTRAINT purchase_payments_pkey PRIMARY KEY (id),
-  CONSTRAINT purchase_payments_purchase_id_fkey FOREIGN KEY (purchase_id) REFERENCES public.purchases(id),
-  CONSTRAINT purchase_payments_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id),
-  CONSTRAINT purchase_payments_payment_method_id_fkey FOREIGN KEY (payment_method_id) REFERENCES public.payment_methods(id)
-);
-CREATE TABLE public.purchases (
-  id bigint NOT NULL DEFAULT nextval('purchases_id_seq'::regclass),
-  provider_id bigint,
-  purchase_date date NOT NULL,
-  currency text NOT NULL CHECK (currency = ANY (ARRAY['ARS'::text, 'USD'::text, 'USDT'::text])),
-  total_amount numeric NOT NULL,
-  total_amount_ars numeric,
-  fx_rate_used numeric,
-  notes text,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  status text NOT NULL DEFAULT 'active'::text CHECK (status = ANY (ARRAY['active'::text, 'cancelled'::text])),
-  void_reason text,
-  voided_at timestamp with time zone,
-  CONSTRAINT purchases_pkey PRIMARY KEY (id),
-  CONSTRAINT purchases_provider_id_fkey FOREIGN KEY (provider_id) REFERENCES public.providers(id)
-);
-CREATE TABLE public.inventory_units (
-  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
-  variant_id integer NOT NULL,
-  purchase_id bigint,
-  purchase_item_id bigint,
-  sale_id bigint,
-  sale_item_id bigint,
-  warranty_exchange_id bigint,
-  identifier_value text NOT NULL,
-  identifier_normalized text GENERATED ALWAYS AS (nullif(lower(regexp_replace(btrim(COALESCE(identifier_value, ''::text)), '[^[:alnum:]]'::text, ''::text, 'g'::text)), ''::text)) STORED,
-  status text NOT NULL DEFAULT 'available'::text CHECK (status = ANY (ARRAY['available'::text, 'reserved'::text, 'sold'::text, 'defective'::text, 'in_repair'::text, 'returned_available'::text, 'returned_defective'::text, 'warranty_hold'::text, 'voided'::text])),
-  received_at timestamp with time zone NOT NULL DEFAULT now(),
-  sold_at timestamp with time zone,
-  returned_at timestamp with time zone,
-  notes text,
+CREATE TABLE public.leads (
+  id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
   created_at timestamp with time zone NOT NULL DEFAULT now(),
   updated_at timestamp with time zone NOT NULL DEFAULT now(),
-  created_by uuid DEFAULT auth.uid(),
-  updated_by uuid,
-  CONSTRAINT inventory_units_pkey PRIMARY KEY (id),
-  CONSTRAINT inventory_units_variant_id_fkey FOREIGN KEY (variant_id) REFERENCES public.product_variants(id),
-  CONSTRAINT inventory_units_purchase_id_fkey FOREIGN KEY (purchase_id) REFERENCES public.purchases(id),
-  CONSTRAINT inventory_units_purchase_item_id_fkey FOREIGN KEY (purchase_item_id) REFERENCES public.purchase_items(id),
-  CONSTRAINT inventory_units_sale_id_fkey FOREIGN KEY (sale_id) REFERENCES public.sales(id),
-  CONSTRAINT inventory_units_sale_item_id_fkey FOREIGN KEY (sale_item_id) REFERENCES public.sale_items(id),
-  CONSTRAINT inventory_units_warranty_exchange_id_fkey FOREIGN KEY (warranty_exchange_id) REFERENCES public.warranty_exchanges(id)
-);
-CREATE TABLE public.inventory_unit_events (
-  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
-  inventory_unit_id bigint NOT NULL,
-  event_type text NOT NULL,
-  from_status text,
-  to_status text,
-  related_table text,
-  related_id bigint,
+  referred_by uuid NOT NULL,
+  customer_id integer,
+  appointment_datetime timestamp with time zone,
+  qr_code text UNIQUE,
+  status text DEFAULT 'pendiente'::text,
   notes text,
-  payload jsonb NOT NULL DEFAULT '{}'::jsonb,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  created_by uuid DEFAULT auth.uid(),
-  CONSTRAINT inventory_unit_events_pkey PRIMARY KEY (id),
-  CONSTRAINT inventory_unit_events_inventory_unit_id_fkey FOREIGN KEY (inventory_unit_id) REFERENCES public.inventory_units(id)
+  sale_id integer UNIQUE,
+  interested_variants jsonb,
+  product_status character varying DEFAULT 'en espera'::character varying,
+  deposit_paid boolean NOT NULL DEFAULT false,
+  deposit_amount numeric NOT NULL DEFAULT 0,
+  deposit_currency text NOT NULL DEFAULT 'ARS'::text,
+  CONSTRAINT leads_pkey PRIMARY KEY (id),
+  CONSTRAINT leads_referred_by_fkey FOREIGN KEY (referred_by) REFERENCES public.user_roles(id_auth),
+  CONSTRAINT leads_customer_id_fkey FOREIGN KEY (customer_id) REFERENCES public.customers(id)
 );
-CREATE TABLE public.sale_item_imeis (
-  id integer NOT NULL DEFAULT nextval('sale_item_imeis_id_seq'::regclass),
-  sale_item_id integer NOT NULL,
-  imei text NOT NULL,
-  inventory_unit_id bigint,
-  created_at timestamp without time zone DEFAULT now(),
-  CONSTRAINT sale_item_imeis_pkey PRIMARY KEY (id),
-  CONSTRAINT sale_item_imeis_sale_item_id_fkey FOREIGN KEY (sale_item_id) REFERENCES public.sale_items(id),
-  CONSTRAINT sale_item_imeis_inventory_unit_id_fkey FOREIGN KEY (inventory_unit_id) REFERENCES public.inventory_units(id)
-);
-CREATE TABLE public.sale_items (
-  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
-  sale_id bigint,
-  variant_id integer,
-  product_name text,
-  variant_name text,
-  color text,
-  storage text,
-  ram text,
-  usd_price numeric,
-  quantity integer,
-  subtotal_usd numeric,
-  subtotal_ars numeric,
-  imei character varying DEFAULT NULL::character varying,
-  commission_pct numeric,
-  commission_fixed numeric,
-  CONSTRAINT sale_items_pkey PRIMARY KEY (id),
-  CONSTRAINT sale_items_sale_id_fkey FOREIGN KEY (sale_id) REFERENCES public.sales(id),
-  CONSTRAINT sale_items_variant_id_fkey FOREIGN KEY (variant_id) REFERENCES public.product_variants(id)
-);
-CREATE TABLE public.sale_payments (
-  id bigint NOT NULL DEFAULT nextval('sale_payments_id_seq'::regclass),
-  sale_id bigint NOT NULL,
-  method text CHECK (method = ANY (ARRAY['efectivo'::text, 'transferencia'::text, 'tarjeta'::text])),
-  amount_ars numeric NOT NULL,
-  amount_usd numeric,
-  reference text,
-  card_brand text,
-  installments integer,
-  created_at timestamp without time zone DEFAULT now(),
-  payment_method_id integer,
-  account_id bigint,
-  CONSTRAINT sale_payments_pkey PRIMARY KEY (id),
-  CONSTRAINT sale_payments_payment_method_fk FOREIGN KEY (payment_method_id) REFERENCES public.payment_methods(id),
-  CONSTRAINT sale_payments_sale_id_fkey FOREIGN KEY (sale_id) REFERENCES public.sales(id),
-  CONSTRAINT sale_payments_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id)
+CREATE TABLE public.commission_payments (
+  id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
+  seller_id uuid NOT NULL,
+  period_start date NOT NULL,
+  period_end date NOT NULL,
+  total_amount numeric NOT NULL,
+  paid_at timestamp with time zone,
+  notes text,
+  CONSTRAINT commission_payments_pkey PRIMARY KEY (id),
+  CONSTRAINT commission_payments_seller_id_fkey FOREIGN KEY (seller_id) REFERENCES public.user_roles(id_auth)
 );
 CREATE TABLE public.sales (
   id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
@@ -418,6 +202,55 @@ CREATE TABLE public.sales (
   CONSTRAINT sales_sales_channel_id_fkey FOREIGN KEY (sales_channel_id) REFERENCES public.sales_channels(id),
   CONSTRAINT sales_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES auth.users(id)
 );
+CREATE TABLE public.sale_items (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  sale_id bigint,
+  variant_id integer,
+  product_name text,
+  variant_name text,
+  color text,
+  storage text,
+  ram text,
+  usd_price numeric,
+  quantity integer,
+  subtotal_usd numeric,
+  subtotal_ars numeric,
+  imei character varying DEFAULT NULL::character varying,
+  commission_pct numeric,
+  commission_fixed numeric,
+  cost_price_usd numeric,
+  is_gift boolean NOT NULL DEFAULT false,
+  CONSTRAINT sale_items_pkey PRIMARY KEY (id),
+  CONSTRAINT sale_items_sale_id_fkey FOREIGN KEY (sale_id) REFERENCES public.sales(id),
+  CONSTRAINT sale_items_variant_id_fkey FOREIGN KEY (variant_id) REFERENCES public.product_variants(id)
+);
+CREATE TABLE public.sale_payments (
+  id bigint NOT NULL DEFAULT nextval('sale_payments_id_seq'::regclass),
+  sale_id bigint NOT NULL,
+  method text CHECK (method = ANY (ARRAY['efectivo'::text, 'transferencia'::text, 'tarjeta'::text])),
+  amount_ars numeric NOT NULL,
+  amount_usd numeric,
+  reference text,
+  card_brand text,
+  installments integer,
+  created_at timestamp without time zone DEFAULT now(),
+  payment_method_id integer,
+  account_id bigint,
+  CONSTRAINT sale_payments_pkey PRIMARY KEY (id),
+  CONSTRAINT sale_payments_payment_method_fk FOREIGN KEY (payment_method_id) REFERENCES public.payment_methods(id),
+  CONSTRAINT sale_payments_sale_id_fkey FOREIGN KEY (sale_id) REFERENCES public.sales(id),
+  CONSTRAINT sale_payments_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id)
+);
+CREATE TABLE public.sale_item_imeis (
+  id integer NOT NULL DEFAULT nextval('sale_item_imeis_id_seq'::regclass),
+  sale_item_id integer NOT NULL,
+  imei text NOT NULL,
+  created_at timestamp without time zone DEFAULT now(),
+  inventory_unit_id bigint,
+  CONSTRAINT sale_item_imeis_pkey PRIMARY KEY (id),
+  CONSTRAINT sale_item_imeis_sale_item_id_fkey FOREIGN KEY (sale_item_id) REFERENCES public.sale_items(id),
+  CONSTRAINT sale_item_imeis_inventory_unit_id_fkey FOREIGN KEY (inventory_unit_id) REFERENCES public.inventory_units(id)
+);
 CREATE TABLE public.sales_channels (
   id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
   name text NOT NULL UNIQUE,
@@ -426,39 +259,135 @@ CREATE TABLE public.sales_channels (
   created_at timestamp with time zone DEFAULT now(),
   CONSTRAINT sales_channels_pkey PRIMARY KEY (id)
 );
-CREATE TABLE public.user_roles (
-  id_auth uuid NOT NULL,
-  role text CHECK (role = ANY (ARRAY['superadmin'::text, 'owner'::text, 'seller'::text])),
-  CONSTRAINT user_roles_pkey PRIMARY KEY (id_auth)
-);
-CREATE TABLE public.users (
-  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+CREATE TABLE public.accounts (
+  id bigint NOT NULL DEFAULT nextval('accounts_id_seq'::regclass),
+  name text NOT NULL,
+  currency text NOT NULL CHECK (currency = ANY (ARRAY['ARS'::text, 'USD'::text, 'USDT'::text])),
+  initial_balance numeric NOT NULL DEFAULT 0,
+  notes text,
+  include_in_balance boolean NOT NULL DEFAULT true,
   created_at timestamp with time zone NOT NULL DEFAULT now(),
-  name text,
-  dni text,
+  is_reference_capital boolean NOT NULL DEFAULT false,
+  is_caja_virtual boolean NOT NULL DEFAULT false,
+  CONSTRAINT accounts_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.fixed_expenses (
+  id bigint NOT NULL DEFAULT nextval('fixed_expenses_id_seq'::regclass),
+  name text NOT NULL,
+  amount numeric NOT NULL,
+  currency text NOT NULL CHECK (currency = ANY (ARRAY['ARS'::text, 'USD'::text, 'USDT'::text])),
+  account_id bigint,
+  category text,
+  due_day integer,
+  notes text,
+  is_active boolean NOT NULL DEFAULT true,
+  last_paid_at timestamp with time zone,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT fixed_expenses_pkey PRIMARY KEY (id),
+  CONSTRAINT fixed_expenses_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id)
+);
+CREATE TABLE public.expenses (
+  id bigint NOT NULL DEFAULT nextval('expenses_id_seq'::regclass),
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  expense_date date NOT NULL,
+  amount numeric NOT NULL,
+  currency text NOT NULL CHECK (currency = ANY (ARRAY['ARS'::text, 'USD'::text, 'USDT'::text])),
+  amount_ars numeric NOT NULL,
+  fx_rate_used numeric,
+  account_id bigint,
+  category text,
+  type text NOT NULL CHECK (type = ANY (ARRAY['fixed'::text, 'variable'::text])),
+  notes text,
+  fixed_expense_id bigint,
+  frequency_value integer,
+  frequency_unit text,
+  last_paid_at timestamp with time zone,
+  is_active boolean NOT NULL DEFAULT true,
+  CONSTRAINT expenses_pkey PRIMARY KEY (id),
+  CONSTRAINT expenses_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id),
+  CONSTRAINT expenses_fixed_expense_id_fkey FOREIGN KEY (fixed_expense_id) REFERENCES public.fixed_expenses(id)
+);
+CREATE TABLE public.providers (
+  id bigint NOT NULL DEFAULT nextval('providers_id_seq'::regclass),
+  name text NOT NULL,
+  contact_name text,
   phone text,
   email text,
-  role text CHECK (role = ANY (ARRAY['superadmin'::text, 'owner'::text, 'seller'::text])),
-  last_name text,
-  adress text,
-  is_active boolean DEFAULT false,
-  id_auth uuid DEFAULT gen_random_uuid() UNIQUE,
-  avatar_url text,
-  CONSTRAINT users_pkey PRIMARY KEY (id),
-  CONSTRAINT users_id_auth_fkey FOREIGN KEY (id_auth) REFERENCES auth.users(id)
-);
-CREATE TABLE public.warranty_exchange_items (
-  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
-  warranty_exchange_id bigint NOT NULL,
-  variant_id integer NOT NULL,
-  imei text,
-  quantity integer NOT NULL DEFAULT 1 CHECK (quantity > 0),
-  unit_price_usd numeric NOT NULL DEFAULT 0,
-  subtotal_usd numeric NOT NULL DEFAULT 0,
+  address text,
+  city text,
+  notes text,
+  is_active boolean NOT NULL DEFAULT true,
   created_at timestamp with time zone NOT NULL DEFAULT now(),
-  CONSTRAINT warranty_exchange_items_pkey PRIMARY KEY (id),
-  CONSTRAINT warranty_exchange_items_warranty_exchange_id_fkey FOREIGN KEY (warranty_exchange_id) REFERENCES public.warranty_exchanges(id),
-  CONSTRAINT warranty_exchange_items_variant_id_fkey FOREIGN KEY (variant_id) REFERENCES public.product_variants(id)
+  CONSTRAINT providers_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.purchases (
+  id bigint NOT NULL DEFAULT nextval('purchases_id_seq'::regclass),
+  provider_id bigint,
+  purchase_date date NOT NULL,
+  currency text NOT NULL CHECK (currency = ANY (ARRAY['ARS'::text, 'USD'::text, 'USDT'::text])),
+  total_amount numeric NOT NULL,
+  total_amount_ars numeric,
+  fx_rate_used numeric,
+  notes text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  status text NOT NULL DEFAULT 'active'::text CHECK (status = ANY (ARRAY['active'::text, 'cancelled'::text])),
+  void_reason text,
+  voided_at timestamp with time zone,
+  CONSTRAINT purchases_pkey PRIMARY KEY (id),
+  CONSTRAINT purchases_provider_id_fkey FOREIGN KEY (provider_id) REFERENCES public.providers(id)
+);
+CREATE TABLE public.purchase_items (
+  id bigint NOT NULL DEFAULT nextval('purchase_items_id_seq'::regclass),
+  purchase_id bigint,
+  variant_id integer,
+  quantity integer NOT NULL,
+  unit_cost numeric NOT NULL,
+  subtotal numeric NOT NULL,
+  CONSTRAINT purchase_items_pkey PRIMARY KEY (id),
+  CONSTRAINT purchase_items_purchase_id_fkey FOREIGN KEY (purchase_id) REFERENCES public.purchases(id),
+  CONSTRAINT purchase_items_variant_id_fkey FOREIGN KEY (variant_id) REFERENCES public.product_variants(id)
+);
+CREATE TABLE public.finance_categories (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  name text NOT NULL,
+  type text NOT NULL CHECK (type = ANY (ARRAY['expense'::text, 'income'::text])),
+  is_active boolean NOT NULL DEFAULT true,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT finance_categories_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.account_movements (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  movement_date date NOT NULL DEFAULT CURRENT_DATE,
+  account_id bigint NOT NULL,
+  type text NOT NULL CHECK (type = ANY (ARRAY['income'::text, 'expense'::text, 'transfer'::text])),
+  amount numeric NOT NULL,
+  currency text NOT NULL CHECK (currency = ANY (ARRAY['ARS'::text, 'USD'::text, 'USDT'::text])),
+  amount_ars numeric,
+  fx_rate_used numeric,
+  related_table text,
+  related_id bigint,
+  notes text,
+  accreditation_status text NOT NULL DEFAULT 'credited'::text CHECK (accreditation_status = ANY (ARRAY['credited'::text, 'pending'::text])),
+  available_on date,
+  CONSTRAINT account_movements_pkey PRIMARY KEY (id),
+  CONSTRAINT account_movements_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id)
+);
+CREATE TABLE public.purchase_payments (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  purchase_id bigint NOT NULL,
+  account_id bigint NOT NULL,
+  payment_method_id integer,
+  amount numeric NOT NULL,
+  currency text NOT NULL CHECK (currency = ANY (ARRAY['ARS'::text, 'USD'::text, 'USDT'::text])),
+  amount_ars numeric,
+  fx_rate_used numeric,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  notes text,
+  CONSTRAINT purchase_payments_pkey PRIMARY KEY (id),
+  CONSTRAINT purchase_payments_purchase_id_fkey FOREIGN KEY (purchase_id) REFERENCES public.purchases(id),
+  CONSTRAINT purchase_payments_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id),
+  CONSTRAINT purchase_payments_payment_method_id_fkey FOREIGN KEY (payment_method_id) REFERENCES public.payment_methods(id)
 );
 CREATE TABLE public.warranty_exchanges (
   id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
@@ -487,11 +416,136 @@ CREATE TABLE public.warranty_exchanges (
   settlement_multiplier numeric,
   store_credit_usd numeric NOT NULL DEFAULT 0,
   store_credit_amount_ars numeric,
+  original_inventory_unit_id bigint,
   CONSTRAINT warranty_exchanges_pkey PRIMARY KEY (id),
   CONSTRAINT warranty_exchanges_sale_id_fkey FOREIGN KEY (sale_id) REFERENCES public.sales(id),
   CONSTRAINT warranty_exchanges_sale_item_id_fkey FOREIGN KEY (sale_item_id) REFERENCES public.sale_items(id),
   CONSTRAINT warranty_exchanges_original_variant_id_fkey FOREIGN KEY (original_variant_id) REFERENCES public.product_variants(id),
   CONSTRAINT warranty_exchanges_replacement_variant_id_fkey FOREIGN KEY (replacement_variant_id) REFERENCES public.product_variants(id),
   CONSTRAINT warranty_exchanges_settlement_account_id_fkey FOREIGN KEY (settlement_account_id) REFERENCES public.accounts(id),
-  CONSTRAINT warranty_exchanges_settlement_payment_method_id_fkey FOREIGN KEY (settlement_payment_method_id) REFERENCES public.payment_methods(id)
+  CONSTRAINT warranty_exchanges_settlement_payment_method_id_fkey FOREIGN KEY (settlement_payment_method_id) REFERENCES public.payment_methods(id),
+  CONSTRAINT warranty_exchanges_original_inventory_unit_id_fkey FOREIGN KEY (original_inventory_unit_id) REFERENCES public.inventory_units(id)
+);
+CREATE TABLE public.aftersales_devices (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  variant_id integer NOT NULL,
+  sale_id bigint,
+  warranty_exchange_id bigint,
+  source_type text NOT NULL CHECK (source_type = ANY (ARRAY['factory'::text, 'warranty'::text])),
+  imei text,
+  quantity integer NOT NULL DEFAULT 1,
+  status text NOT NULL DEFAULT 'defective_in_store'::text CHECK (status = ANY (ARRAY['defective_in_store'::text, 'in_repair'::text, 'repaired'::text])),
+  notes text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  created_by uuid DEFAULT auth.uid(),
+  include_in_stock_cost_balance boolean NOT NULL DEFAULT false,
+  sold_sale_id bigint,
+  sold_at timestamp with time zone,
+  inventory_unit_id bigint,
+  CONSTRAINT aftersales_devices_pkey PRIMARY KEY (id),
+  CONSTRAINT aftersales_devices_variant_id_fkey FOREIGN KEY (variant_id) REFERENCES public.product_variants(id),
+  CONSTRAINT aftersales_devices_sale_id_fkey FOREIGN KEY (sale_id) REFERENCES public.sales(id),
+  CONSTRAINT aftersales_devices_warranty_exchange_id_fkey FOREIGN KEY (warranty_exchange_id) REFERENCES public.warranty_exchanges(id),
+  CONSTRAINT aftersales_devices_sold_sale_id_fkey FOREIGN KEY (sold_sale_id) REFERENCES public.sales(id),
+  CONSTRAINT aftersales_devices_inventory_unit_id_fkey FOREIGN KEY (inventory_unit_id) REFERENCES public.inventory_units(id)
+);
+CREATE TABLE public.warranty_exchange_items (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  warranty_exchange_id bigint NOT NULL,
+  variant_id integer NOT NULL,
+  imei text,
+  quantity integer NOT NULL DEFAULT 1 CHECK (quantity > 0),
+  unit_price_usd numeric NOT NULL DEFAULT 0,
+  subtotal_usd numeric NOT NULL DEFAULT 0,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  inventory_unit_id bigint,
+  CONSTRAINT warranty_exchange_items_pkey PRIMARY KEY (id),
+  CONSTRAINT warranty_exchange_items_warranty_exchange_id_fkey FOREIGN KEY (warranty_exchange_id) REFERENCES public.warranty_exchanges(id),
+  CONSTRAINT warranty_exchange_items_variant_id_fkey FOREIGN KEY (variant_id) REFERENCES public.product_variants(id),
+  CONSTRAINT warranty_exchange_items_inventory_unit_id_fkey FOREIGN KEY (inventory_unit_id) REFERENCES public.inventory_units(id)
+);
+CREATE TABLE public.inventory_units (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  variant_id integer NOT NULL,
+  purchase_id bigint,
+  purchase_item_id bigint,
+  sale_id bigint,
+  sale_item_id bigint,
+  warranty_exchange_id bigint,
+  identifier_value text NOT NULL,
+  identifier_normalized text DEFAULT NULLIF(lower(regexp_replace(btrim(COALESCE(identifier_value, ''::text)), '[^[:alnum:]]'::text, ''::text, 'g'::text)), ''::text),
+  status text NOT NULL DEFAULT 'available'::text CHECK (status = ANY (ARRAY['available'::text, 'reserved'::text, 'sold'::text, 'defective'::text, 'in_repair'::text, 'returned_available'::text, 'returned_defective'::text, 'warranty_hold'::text, 'voided'::text])),
+  received_at timestamp with time zone NOT NULL DEFAULT now(),
+  sold_at timestamp with time zone,
+  returned_at timestamp with time zone,
+  notes text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  created_by uuid DEFAULT auth.uid(),
+  updated_by uuid,
+  CONSTRAINT inventory_units_pkey PRIMARY KEY (id),
+  CONSTRAINT inventory_units_variant_id_fkey FOREIGN KEY (variant_id) REFERENCES public.product_variants(id),
+  CONSTRAINT inventory_units_purchase_id_fkey FOREIGN KEY (purchase_id) REFERENCES public.purchases(id),
+  CONSTRAINT inventory_units_purchase_item_id_fkey FOREIGN KEY (purchase_item_id) REFERENCES public.purchase_items(id),
+  CONSTRAINT inventory_units_sale_id_fkey FOREIGN KEY (sale_id) REFERENCES public.sales(id),
+  CONSTRAINT inventory_units_sale_item_id_fkey FOREIGN KEY (sale_item_id) REFERENCES public.sale_items(id),
+  CONSTRAINT inventory_units_warranty_exchange_id_fkey FOREIGN KEY (warranty_exchange_id) REFERENCES public.warranty_exchanges(id)
+);
+CREATE TABLE public.inventory_unit_events (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  inventory_unit_id bigint NOT NULL,
+  event_type text NOT NULL,
+  from_status text,
+  to_status text,
+  related_table text,
+  related_id bigint,
+  notes text,
+  payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  created_by uuid DEFAULT auth.uid(),
+  CONSTRAINT inventory_unit_events_pkey PRIMARY KEY (id),
+  CONSTRAINT inventory_unit_events_inventory_unit_id_fkey FOREIGN KEY (inventory_unit_id) REFERENCES public.inventory_units(id)
+);
+CREATE TABLE public.cash_registers (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  user_id uuid NOT NULL,
+  register_date date NOT NULL DEFAULT CURRENT_DATE,
+  status text NOT NULL DEFAULT 'open'::text CHECK (status = ANY (ARRAY['open'::text, 'closed'::text])),
+  currency text NOT NULL DEFAULT 'ARS'::text CHECK (currency = ANY (ARRAY['ARS'::text, 'USD'::text, 'USDT'::text])),
+  opening_amount numeric NOT NULL DEFAULT 0,
+  closed_amount numeric,
+  expected_amount numeric,
+  difference numeric,
+  opened_at timestamp with time zone NOT NULL DEFAULT now(),
+  closed_at timestamp with time zone,
+  distribution jsonb,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  opening_amounts jsonb NOT NULL DEFAULT '[{"amount": 0, "currency": "ARS"}]'::jsonb,
+  closed_amounts jsonb,
+  CONSTRAINT cash_registers_pkey PRIMARY KEY (id),
+  CONSTRAINT cash_registers_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
+);
+CREATE TABLE public.cash_register_movements (
+  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  cash_register_id bigint NOT NULL,
+  type text NOT NULL CHECK (type = ANY (ARRAY['opening'::text, 'sale_income'::text, 'expense'::text, 'withdrawal'::text, 'income'::text, 'transfer_in'::text, 'transfer_out'::text, 'closing'::text])),
+  amount numeric NOT NULL,
+  currency text NOT NULL DEFAULT 'ARS'::text,
+  related_table text,
+  related_id bigint,
+  notes text,
+  created_at timestamp with time zone DEFAULT now(),
+  created_by uuid,
+  payment_method_id integer,
+  payment_method_name text,
+  reference text,
+  multiplier numeric DEFAULT 1,
+  net_amount numeric,
+  accreditation_status text DEFAULT 'credited'::text CHECK (accreditation_status = ANY (ARRAY['credited'::text, 'pending'::text])),
+  available_on date,
+  sale_payment_id bigint,
+  CONSTRAINT cash_register_movements_pkey PRIMARY KEY (id),
+  CONSTRAINT cash_register_movements_register_fkey FOREIGN KEY (cash_register_id) REFERENCES public.cash_registers(id)
 );

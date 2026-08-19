@@ -30,4 +30,5 @@ export const ROUTE_TRANSLATIONS = {
   accounts: "Cuentas",
   movements: "Movimientos",
   finance: "Finanzas",
+  "historical-cash-register": "Historial de Caja",
 };

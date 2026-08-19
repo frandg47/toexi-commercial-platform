@@ -438,14 +438,16 @@ export default function MovementsConfig() {
     const totals = new Map();
     balanceMovementsAll.forEach((m) => {
       if (isMovementPendingAccreditation(m)) return;
-      const entry = totals.get(m.account_id) || { income: 0, expense: 0 };
+      const key = Number(m.account_id);
+      const entry = totals.get(key) || { income: 0, expense: 0 };
       if (m.type === "income") entry.income += Number(m.amount || 0);
       if (m.type === "expense") entry.expense += Number(m.amount || 0);
-      totals.set(m.account_id, entry);
+      totals.set(key, entry);
     });
 
     return accounts.map((acc) => {
-      const totalsForAccount = totals.get(acc.id) || { income: 0, expense: 0 };
+      const key = Number(acc.id);
+      const totalsForAccount = totals.get(key) || { income: 0, expense: 0 };
       const current =
         Number(acc.initial_balance || 0) +
         totalsForAccount.income -
@@ -463,14 +465,16 @@ export default function MovementsConfig() {
     const totals = new Map();
     balanceMovementsFiltered.forEach((m) => {
       if (isMovementPendingAccreditation(m)) return;
-      const entry = totals.get(m.account_id) || { income: 0, expense: 0 };
+      const key = Number(m.account_id);
+      const entry = totals.get(key) || { income: 0, expense: 0 };
       if (m.type === "income") entry.income += Number(m.amount || 0);
       if (m.type === "expense") entry.expense += Number(m.amount || 0);
-      totals.set(m.account_id, entry);
+      totals.set(key, entry);
     });
 
     return accounts.map((acc) => {
-      const totalsForAccount = totals.get(acc.id) || { income: 0, expense: 0 };
+      const key = Number(acc.id);
+      const totalsForAccount = totals.get(key) || { income: 0, expense: 0 };
       const current =
         Number(acc.initial_balance || 0) +
         totalsForAccount.income -

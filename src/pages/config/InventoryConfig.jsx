@@ -91,6 +91,7 @@ const EVENT_LABELS = {
   warranty_returned: "Ingreso por garantia",
   warranty_replacement_delivered: "Reemplazo entregado",
   manual_serial_stock_initialized: "Carga manual de seriales",
+  canje_received: "Ingreso por plan canje",
 };
 
 const TRACKING_LABELS = {
@@ -1230,6 +1231,17 @@ export default function InventoryConfig() {
                                 <div className="text-xs text-muted-foreground">
                                   {unit.purchase.providers?.name ||
                                     "Sin proveedor"}
+                                </div>
+                              </div>
+                            ) : unit.notes?.includes("plan canje") ? (
+                              <div className="space-y-1 text-sm">
+                                <div className="text-purple-600 font-medium">Canje</div>
+                                <div className="text-xs text-muted-foreground">
+                                  {unit.sale?.customers
+                                    ? formatCustomerName(unit.sale.customers)
+                                    : unit.sale?.trade_in_data?.product_name
+                                      ? `Recibido: ${unit.sale.trade_in_data.product_name}`
+                                      : "Sin cliente"}
                                 </div>
                               </div>
                             ) : (

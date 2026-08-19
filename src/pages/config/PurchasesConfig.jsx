@@ -150,6 +150,7 @@ const PurchasesConfig = () => {
   const [detailPurchase, setDetailPurchase] = useState(null);
   const [detailItems, setDetailItems] = useState([]);
   const [accounts, setAccounts] = useState([]);
+  const [isRegisterOpen, setIsRegisterOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [filters, setFilters] = useState({
     providerId: "all",
@@ -261,7 +262,7 @@ const PurchasesConfig = () => {
           .maybeSingle(),
         supabase
           .from("accounts")
-          .select("id, name, currency, is_reference_capital")
+          .select("id, name, currency, is_reference_capital, is_efectivo, is_caja_virtual")
           .eq("is_reference_capital", false)
           .order("name", { ascending: true }),
       ]);
@@ -279,6 +280,23 @@ const PurchasesConfig = () => {
   useEffect(() => {
     loadPurchases();
   }, [loadPurchases]);
+
+  useEffect(() => {
+    const checkRegister = async () => {
+      const { data } = await supabase
+        .from("cash_registers")
+        .select("id")
+        .eq("status", "open")
+        .maybeSingle();
+      setIsRegisterOpen(!!data);
+    };
+    checkRegister();
+  }, []);
+
+  const displayAccounts = useMemo(() => {
+    if (isRegisterOpen) return accounts.filter((a) => !a.is_efectivo && !a.is_caja_virtual);
+    return accounts;
+  }, [accounts, isRegisterOpen]);
 
   const totalAmount = useMemo(() => {
     return items.reduce(
@@ -302,7 +320,7 @@ const PurchasesConfig = () => {
   const totalPaid = useMemo(
     () =>
       payments.reduce((acc, payment) => {
-        const account = accounts.find(
+        const account = displayAccounts.find(
           (item) => String(item.id) === String(payment.account_id || "")
         );
         const currency = account?.currency || form.currency;
@@ -314,7 +332,7 @@ const PurchasesConfig = () => {
         );
         return acc + (Number.isFinite(amountArs) ? amountArs : 0);
       }, 0),
-    [accounts, form.currency, form.manual_fx_rate, form.rate_mode, fxRate, payments, usdtRate]
+    [displayAccounts, form.currency, form.manual_fx_rate, form.rate_mode, fxRate, payments, usdtRate]
   );
 
   const remainingArs = useMemo(
@@ -351,7 +369,7 @@ const PurchasesConfig = () => {
   const editTotalPaid = useMemo(
     () =>
       editPayments.reduce((acc, payment) => {
-        const account = accounts.find(
+        const account = displayAccounts.find(
           (item) => String(item.id) === String(payment.account_id || "")
         );
         const currency = account?.currency || editForm.currency;
@@ -367,7 +385,7 @@ const PurchasesConfig = () => {
         );
         return acc + (Number.isFinite(amountArs) ? amountArs : 0);
       }, 0),
-    [accounts, editForm.currency, editForm.manual_fx_rate, editForm.rate_mode, editPayments, fxRate, usdtRate]
+    [displayAccounts, editForm.currency, editForm.manual_fx_rate, editForm.rate_mode, editPayments, fxRate, usdtRate]
   );
 
   const editRemainingArs = useMemo(
@@ -418,7 +436,7 @@ const PurchasesConfig = () => {
     const payment = payments[index];
     if (!payment?.account_id) return;
 
-    const account = accounts.find(
+    const account = displayAccounts.find(
       (item) => String(item.id) === String(payment.account_id || "")
     );
     const accountCurrency = account?.currency || "ARS";
@@ -497,7 +515,7 @@ const PurchasesConfig = () => {
     const payment = editPayments[index];
     if (!payment?.account_id) return;
 
-    const account = accounts.find(
+    const account = displayAccounts.find(
       (item) => String(item.id) === String(payment.account_id || "")
     );
     const accountCurrency = account?.currency || "ARS";
@@ -547,7 +565,7 @@ const PurchasesConfig = () => {
     }
     if (
       payments.some((payment) => {
-        const account = accounts.find(
+        const account = displayAccounts.find(
           (item) => String(item.id) === String(payment.account_id || "")
         );
         if (!account) return true;
@@ -613,7 +631,7 @@ const PurchasesConfig = () => {
     }
 
     const paymentRows = payments.map((payment) => {
-      const account = accounts.find(
+      const account = displayAccounts.find(
         (item) => String(item.id) === String(payment.account_id || "")
       );
       const paymentAmount = Number(payment.amount || 0);
@@ -807,7 +825,7 @@ const PurchasesConfig = () => {
     }
     if (
       editPayments.some((payment) => {
-        const account = accounts.find(
+        const account = displayAccounts.find(
           (item) => String(item.id) === String(payment.account_id || "")
         );
         if (!account) return true;
@@ -877,7 +895,7 @@ const PurchasesConfig = () => {
     }
 
     const editPaymentRows = editPayments.map((payment) => {
-      const account = accounts.find(
+      const account = displayAccounts.find(
         (item) => String(item.id) === String(payment.account_id || "")
       );
       const paymentAmount = Number(payment.amount || 0);
@@ -1326,12 +1344,12 @@ const PurchasesConfig = () => {
                       <SelectValue placeholder="Cuenta..." />
                     </SelectTrigger>
                     <SelectContent className="z-[9999]">
-                      {accounts.length === 0 && (
+                      {displayAccounts.length === 0 && (
                         <SelectItem value="none" disabled>
                           Sin cuentas disponibles
                         </SelectItem>
                       )}
-                      {accounts.map((acc) => (
+                      {displayAccounts.map((acc) => (
                         <SelectItem key={acc.id} value={String(acc.id)}>
                           {acc.name} ({acc.currency})
                         </SelectItem>
@@ -1355,7 +1373,7 @@ const PurchasesConfig = () => {
                     type="number"
                     step="0.01"
                     min="0"
-                    placeholder={`Monto (${accounts.find((acc) => String(acc.id) === String(payment.account_id || ""))?.currency || "ARS"})`}
+                    placeholder={`Monto (${displayAccounts.find((acc) => String(acc.id) === String(payment.account_id || ""))?.currency || "ARS"})`}
                     value={payment.amount}
                     onChange={(e) =>
                       handleUpdatePayment(index, "amount", e.target.value)
@@ -1378,7 +1396,7 @@ const PurchasesConfig = () => {
                   {formatARS(
                     convertAmountToARS(
                       payment.amount,
-                      accounts.find(
+                      displayAccounts.find(
                         (acc) => String(acc.id) === String(payment.account_id || "")
                       )?.currency || "ARS",
                       form.rate_mode === "manual"
@@ -1883,12 +1901,12 @@ const PurchasesConfig = () => {
                         <SelectValue placeholder="Cuenta..." />
                       </SelectTrigger>
                       <SelectContent className="z-[9999]">
-                        {accounts.length === 0 && (
+                        {displayAccounts.length === 0 && (
                           <SelectItem value="none" disabled>
                             Sin cuentas disponibles
                           </SelectItem>
                         )}
-                        {accounts.map((account) => (
+                        {displayAccounts.map((account) => (
                           <SelectItem key={account.id} value={String(account.id)}>
                             {account.name} ({account.currency})
                           </SelectItem>
@@ -1912,7 +1930,7 @@ const PurchasesConfig = () => {
                       type="number"
                       step="0.01"
                       min="0"
-                      placeholder={`Monto (${accounts.find((acc) => String(acc.id) === String(payment.account_id || ""))?.currency || "ARS"})`}
+                      placeholder={`Monto (${displayAccounts.find((acc) => String(acc.id) === String(payment.account_id || ""))?.currency || "ARS"})`}
                       value={payment.amount}
                       onChange={(e) =>
                         handleUpdateEditPayment(index, "amount", e.target.value)
@@ -1935,7 +1953,7 @@ const PurchasesConfig = () => {
                     {formatARS(
                       convertAmountToARS(
                         payment.amount,
-                        accounts.find(
+                        displayAccounts.find(
                           (acc) => String(acc.id) === String(payment.account_id || "")
                         )?.currency || "ARS",
                         editForm.rate_mode === "manual"

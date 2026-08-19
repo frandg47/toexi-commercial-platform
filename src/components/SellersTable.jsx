@@ -166,6 +166,7 @@ const SellersTable = ({ refreshToken = 0 }) => {
     const [refreshing, setRefreshing] = useState(false);
     const [fxRate, setFxRate] = useState(null);
     const [accounts, setAccounts] = useState([]);
+    const [isRegisterOpen, setIsRegisterOpen] = useState(false);
     const [balanceMovements, setBalanceMovements] = useState([]);
     const [availableMonths, setAvailableMonths] = useState([]);
     const [paymentDialog, setPaymentDialog] = useState({
@@ -472,7 +473,7 @@ const SellersTable = ({ refreshToken = 0 }) => {
             const [{ data, error }, movementsRes] = await Promise.all([
                 supabase
                     .from("accounts")
-                    .select("id, name, currency, initial_balance")
+                    .select("id, name, currency, initial_balance, is_efectivo, is_caja_virtual")
                     .order("name", { ascending: true }),
                 supabase
                     .from("account_movements")
@@ -494,6 +495,23 @@ const SellersTable = ({ refreshToken = 0 }) => {
         loadAccounts();
     }, []);
 
+    useEffect(() => {
+        const checkRegister = async () => {
+            const { data } = await supabase
+                .from("cash_registers")
+                .select("id")
+                .eq("status", "open")
+                .maybeSingle();
+            setIsRegisterOpen(!!data);
+        };
+        checkRegister();
+    }, []);
+
+    const displayAccounts = useMemo(() => {
+        if (isRegisterOpen) return accounts.filter((a) => !a.is_efectivo && !a.is_caja_virtual);
+        return accounts;
+    }, [accounts, isRegisterOpen]);
+
     const accountBalances = useMemo(() => {
         const totals = new Map();
         balanceMovements.forEach((movement) => {
@@ -509,7 +527,7 @@ const SellersTable = ({ refreshToken = 0 }) => {
             totals.set(movement.account_id, entry);
         });
 
-        return accounts.map((acc) => {
+        return displayAccounts.map((acc) => {
             const totalsForAccount = totals.get(acc.id) || {
                 income: 0,
                 expense: 0,
@@ -523,7 +541,7 @@ const SellersTable = ({ refreshToken = 0 }) => {
                 current_balance: current,
             };
         });
-    }, [accounts, balanceMovements]);
+    }, [displayAccounts, balanceMovements]);
 
     const selectedPaymentAccount = useMemo(() => {
         return accountBalances.find(
@@ -540,7 +558,7 @@ const SellersTable = ({ refreshToken = 0 }) => {
                 return;
             }
 
-            const account = accounts.find(
+            const account = displayAccounts.find(
                 (acc) => String(acc.id) === String(paymentAccountId)
             );
             if (!account) {
@@ -635,7 +653,7 @@ const SellersTable = ({ refreshToken = 0 }) => {
         } finally {
             setRefreshing(false);
         }
-    }, [accounts, fetchSellers, fxRate, paymentAccountId]);
+    }, [displayAccounts, fetchSellers, fxRate, paymentAccountId]);
 
     const toggleColumn = useCallback((columnName) => {
         setVisibleColumns((current) =>
@@ -944,7 +962,7 @@ const SellersTable = ({ refreshToken = 0 }) => {
                                             <SelectValue placeholder="Seleccionar cuenta" />
                                         </SelectTrigger>
                                         <SelectContent>
-                                            {accounts.map((acc) => (
+                                            {displayAccounts.map((acc) => (
                                                 <SelectItem key={acc.id} value={String(acc.id)}>
                                                     {acc.name} ({acc.currency})
                                                 </SelectItem>

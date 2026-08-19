@@ -31,6 +31,7 @@ import {
     DialogFooter,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
     Select,
     SelectTrigger,
@@ -47,8 +48,7 @@ import {
 } from "@/components/ui/popover";
 
 import { IconCalendar, IconRefresh, IconDownload, IconShieldCheck } from "@tabler/icons-react";
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
+import { generateSalePDF } from "@/utils/generateSalePDF";
 
 const AR_TIMEZONE = "America/Argentina/Buenos_Aires";
 const AR_OFFSET = "-03:00";
@@ -84,56 +84,6 @@ const toTimestampAR = (date) => {
     return `${yyyy}-${mm}-${dd}T${hh}:${min}:${ss}${AR_OFFSET}`;
 };
 
-const buildSaleMovementHistory = (payment, movement) => {
-    const isUsdPayment = payment.amount_usd != null && Number(payment.amount_usd) !== 0;
-    const movementAmount = movement?.amount;
-    const movementCurrency = movement?.currency;
-
-    return {
-        movement_date: movement?.movement_date || toDateKeyAR(new Date()),
-        account_id: payment.account_id,
-        type: "transfer",
-        amount: movementAmount != null
-            ? Number(movementAmount || 0)
-            : isUsdPayment ? Number(payment.amount_usd || 0) : Number(payment.amount_ars || 0),
-        currency: movementCurrency || (isUsdPayment ? "USD" : "ARS"),
-        amount_ars: movementCurrency === "ARS" || (!movementCurrency && !isUsdPayment)
-            ? Number(movement?.amount_ars ?? payment.amount_ars ?? 0)
-            : null,
-        fx_rate_used: null,
-        related_table: "sale_payment_history",
-        related_id: payment.id,
-        accreditation_status: movement?.accreditation_status || "credited",
-        available_on: movement?.available_on || movement?.movement_date || toDateKeyAR(new Date()),
-        notes: `Historial de cobro de venta #${payment.sale_id}`,
-    };
-};
-
-const buildSaleReversalMovement = (payment, saleId, reason, movement) => {
-    const isUsdPayment = payment.amount_usd != null && Number(payment.amount_usd) !== 0;
-    const movementAmount = movement?.amount;
-    const movementCurrency = movement?.currency;
-
-    return {
-        movement_date: toDateKeyAR(new Date()),
-        account_id: payment.account_id,
-        type: "expense",
-        amount: movementAmount != null
-            ? Number(movementAmount || 0)
-            : isUsdPayment ? Number(payment.amount_usd || 0) : Number(payment.amount_ars || 0),
-        currency: movementCurrency || (isUsdPayment ? "USD" : "ARS"),
-        amount_ars: movementCurrency === "ARS" || (!movementCurrency && !isUsdPayment)
-            ? Number(movement?.amount_ars ?? payment.amount_ars ?? 0)
-            : null,
-        fx_rate_used: null,
-        related_table: "sale_reversal",
-        related_id: payment.id,
-        accreditation_status: "credited",
-        available_on: toDateKeyAR(new Date()),
-        notes: `Anulacion de venta #${saleId}${reason ? ` | Motivo: ${reason}` : ""}`,
-    };
-};
-
 const formatVariantLabel = (item) => {
     if (!item) return "-";
     const parts = [item.product_name, item.variant_name, item.color && `(${item.color})`]
@@ -144,14 +94,7 @@ const formatVariantLabel = (item) => {
 const formatWarrantyBucket = (bucket) =>
     bucket === "defective" ? "Defectuoso" : "Disponible";
 
-const formatWarrantyVariantForNote = (variant) =>
-    [
-        variant?.products?.name,
-        variant?.variant_name,
-        variant?.color ? `(${variant.color})` : null,
-    ]
-        .filter(Boolean)
-        .join(" ") || "-";
+
 
 const normalizeIdentifier = (value) =>
     String(value || "")
@@ -162,88 +105,7 @@ const normalizeIdentifier = (value) =>
 const isSerialTrackedVariant = (variant) =>
     variant?.products?.inventory_tracking_mode === "serial";
 
-const buildWarrantyPdfLines = (warranties = []) =>
-    warranties.flatMap((warranty) => {
-        const lines = [
-            `Detalle: ${warranty.reason || "-"}`,
-            `Ingreso del equipo devuelto a: ${formatWarrantyBucket(warranty.returned_stock_bucket)}`,
-        ];
 
-        if (Math.abs(Number(warranty.price_difference_usd || 0)) > 0.009) {
-            lines.push(
-                `${warranty.settlement_type === "customer_refund" ? "Reintegro" : "Diferencia cobrada"}: ${
-                    warranty.settlement_currency || ""
-                } ${Number(warranty.settlement_amount || 0).toLocaleString("es-AR", {
-                    minimumFractionDigits: 2,
-                    maximumFractionDigits: 2,
-                })} (${Number(warranty.price_difference_usd || 0).toFixed(2)} USD)`,
-            );
-        }
-
-        if (warranty.settlement_method?.name) {
-            lines.push(
-                `Metodo: ${warranty.settlement_method.name}${
-                    warranty.settlement_installments
-                        ? ` | ${warranty.settlement_installments} cuotas`
-                        : ""
-                }${
-                    Number(warranty.settlement_multiplier || 1) > 1
-                        ? ` | x${Number(warranty.settlement_multiplier).toFixed(2)}`
-                        : ""
-                }`,
-            );
-        }
-
-        if (warranty.notes) {
-            lines.push(`Notas de garantia: ${warranty.notes}`);
-        }
-
-        if (Number(warranty.store_credit_usd || 0) > 0.009) {
-            lines.push(
-                `Credito a favor proxima compra: USD ${Number(
-                    warranty.store_credit_usd || 0,
-                ).toLocaleString("es-AR", {
-                    minimumFractionDigits: 2,
-                    maximumFractionDigits: 2,
-                })}`,
-            );
-        }
-
-        return lines;
-    });
-
-const buildWarrantyPdfRows = (warranties = []) =>
-    warranties.flatMap((warranty) => {
-        const replacementItems =
-            warranty.replacement_items?.length > 0
-                ? warranty.replacement_items
-                : [
-                      {
-                          variant: warranty.replacement_variant,
-                          imei: warranty.replacement_imei,
-                          quantity: warranty.quantity,
-                      },
-                  ];
-
-        return replacementItems.map((replacement, index) => [
-            index === 0 ? formatWarrantyVariantForNote(warranty.original_variant) : "",
-            index === 0 ? warranty.original_imei || "-" : "",
-            formatWarrantyVariantForNote(replacement.variant),
-            replacement.imei || "-",
-            String(replacement.quantity || 1),
-            index === 0
-                ? warranty.settlement_method?.name
-                    ? `${warranty.settlement_method.name}${
-                          warranty.settlement_installments
-                              ? ` (${warranty.settlement_installments} cuotas)`
-                              : ""
-                      }`
-                    : Number(warranty.store_credit_usd || 0) > 0.009
-                      ? "Credito proxima compra"
-                      : "-"
-                : "",
-        ]);
-    });
 
 const getPaymentDisplayCurrency = (methodName) => {
     const upper = methodName?.toUpperCase();
@@ -318,11 +180,13 @@ export function SalesList() {
             const oldDate = oldValue
                 ? new Date(oldValue).toLocaleString("es-AR", {
                       timeZone: AR_TIMEZONE,
+                      hour12: false,
                   })
                 : "-";
             const newDate = newValue
                 ? new Date(newValue).toLocaleString("es-AR", {
                       timeZone: AR_TIMEZONE,
+                      hour12: false,
                   })
                 : "-";
             return <span>Fecha: {oldDate} → {newDate}</span>;
@@ -345,13 +209,20 @@ export function SalesList() {
     };
 
 
-    // �️ Estados para anulación
+    // 📌 Estados para anulación
     const [cancelOpen, setCancelOpen] = useState(false);
     const [cancelingSale, setCancelingS] = useState(null);
     const [cancelReason, setCancelReason] = useState("");
     const [bucketOpen, setBucketOpen] = useState(false);
     const [selectedBucket, setSelectedBucket] = useState("available");
     const [cancelingProcess, setCancelingProcess] = useState(false);
+    const [canjeReceivedUnits, setCanjeReceivedUnits] = useState([]);
+    const [deleteCanjeUnit, setDeleteCanjeUnit] = useState(true);
+
+    // 📌 Estados para cancelar venta (solo ocultar de caja)
+    const [confirmCancelOpen, setConfirmCancelOpen] = useState(false);
+    const [confirmCancelSale, setConfirmCancelSale] = useState(null);
+    const [confirmCancelProcessing, setConfirmCancelProcessing] = useState(false);
     const [warrantyOpen, setWarrantyOpen] = useState(false);
     const [warrantyProcessing, setWarrantyProcessing] = useState(false);
     const [warrantySale, setWarrantySale] = useState(null);
@@ -360,6 +231,7 @@ export function SalesList() {
     const [paymentMethods, setPaymentMethods] = useState([]);
     const [paymentInstallments, setPaymentInstallments] = useState([]);
     const [accounts, setAccounts] = useState([]);
+    const [isRegisterOpen, setIsRegisterOpen] = useState(false);
     const [fxRate, setFxRate] = useState(null);
     const [usdtRate, setUsdtRate] = useState(null);
     const [selectedWarrantyItemId, setSelectedWarrantyItemId] = useState("");
@@ -430,6 +302,11 @@ export function SalesList() {
             ),
         [paymentInstallments, warrantySettlementMethodId],
     );
+
+    const displayAccounts = useMemo(() => {
+        if (isRegisterOpen) return accounts.filter((a) => !a.is_efectivo && !a.is_caja_virtual);
+        return accounts;
+    }, [accounts, isRegisterOpen]);
     const warrantyPriceDiff = useMemo(() => {
         if (!selectedWarrantyItem || replacementRowsDetailed.length === 0) {
             return {
@@ -461,11 +338,11 @@ export function SalesList() {
     }, [replacementRowsDetailed, selectedWarrantyItem]);
     const selectedSettlementAccount = useMemo(
         () =>
-            accounts.find(
+            displayAccounts.find(
                 (account) =>
                     String(account.id) === String(warrantySettlementAccountId),
             ) || null,
-        [accounts, warrantySettlementAccountId],
+        [displayAccounts, warrantySettlementAccountId],
     );
     const settlementMultiplier = useMemo(() => {
         if (!selectedSettlementMethod) return 1;
@@ -487,10 +364,10 @@ export function SalesList() {
         warrantySettlementInstallments,
     ]);
     const settlementAccounts = useMemo(() => {
-        if (!selectedSettlementMethod) return accounts;
+        if (!selectedSettlementMethod) return displayAccounts;
         const currency = getPaymentDisplayCurrency(selectedSettlementMethod.name);
-        return accounts.filter((account) => account.currency === currency);
-    }, [accounts, selectedSettlementMethod]);
+        return displayAccounts.filter((account) => account.currency === currency);
+    }, [displayAccounts, selectedSettlementMethod]);
     const warrantySettlementPreview = useMemo(() => {
         if (!selectedSettlementAccount || Math.abs(warrantyPriceDiff.differenceUsd) <= 0.009) {
             return null;
@@ -543,6 +420,7 @@ export function SalesList() {
         start_date: "",
         end_date: "",
         seller_id: "",
+        status: "",
     });
 
     // 📌 Fecha inicial (mes actual)
@@ -631,7 +509,7 @@ export function SalesList() {
                     .select("id, payment_method_id, installments, multiplier"),
                 supabase
                     .from("accounts")
-                    .select("id, name, currency, is_reference_capital")
+                    .select("id, name, currency, is_reference_capital, is_efectivo, is_caja_virtual")
                     .eq("is_reference_capital", false)
                     .order("name", { ascending: true }),
                 supabase
@@ -673,6 +551,18 @@ export function SalesList() {
         fetchChannels();
         fetchWarrantyHelpers();
     }, [canManageSaleActions]);
+
+    useEffect(() => {
+        const checkRegister = async () => {
+            const { data } = await supabase
+                .from("cash_registers")
+                .select("id")
+                .eq("status", "open")
+                .maybeSingle();
+            setIsRegisterOpen(!!data);
+        };
+        checkRegister();
+    }, []);
 
     const load = useCallback(async () => {
         try {
@@ -797,9 +687,9 @@ export function SalesList() {
     const handleSaveEdit = async () => {
         if (!editingSale) return;
 
-        // Validar que no sea una venta anulada
-        if (editingSale.status === "anulado") {
-            toast.error("No se puede editar una venta anulada");
+        // Validar que no sea una venta anulada o cancelada
+        if (editingSale.status === "anulado" || editingSale.status === "cancelado") {
+            toast.error("No se puede editar una venta anulada o cancelada");
             return;
         }
 
@@ -866,13 +756,30 @@ export function SalesList() {
         }
     };
 
-    const startCancelSale = (sale) => {
+    const fetchCanjeReceivedUnits = async (saleId) => {
+        const { data } = await supabase
+            .from("inventory_units")
+            .select("id, variant_id, identifier_value")
+            .eq("sale_id", saleId)
+            .ilike("notes", "%plan canje%")
+            .is("sale_item_id", null);
+        return data || [];
+    };
+
+    const startCancelSale = async (sale) => {
         if (!canManageSaleActions) {
             toast.error("Solo owner o superadmin puede anular ventas");
             return;
         }
         setCancelingS(sale);
         setCancelReason("");
+        setDeleteCanjeUnit(true);
+        if (sale.sale_type === "canje") {
+            const units = await fetchCanjeReceivedUnits(sale.sale_id);
+            setCanjeReceivedUnits(units);
+        } else {
+            setCanjeReceivedUnits([]);
+        }
         setCancelOpen(true);
     };
 
@@ -880,6 +787,121 @@ export function SalesList() {
         setCancelOpen(false);
         setCancelingS(null);
         setCancelReason("");
+        setCanjeReceivedUnits([]);
+        setDeleteCanjeUnit(true);
+    };
+
+    const startConfirmCancelSale = async (sale) => {
+        if (!canManageSaleActions) {
+            toast.error("Solo owner o superadmin puede cancelar ventas");
+            return;
+        }
+        setConfirmCancelSale(sale);
+        setDeleteCanjeUnit(true);
+        if (sale.sale_type === "canje") {
+            const units = await fetchCanjeReceivedUnits(sale.sale_id);
+            setCanjeReceivedUnits(units);
+        } else {
+            setCanjeReceivedUnits([]);
+        }
+        setConfirmCancelOpen(true);
+    };
+
+    const closeConfirmCancelDialog = () => {
+        setConfirmCancelOpen(false);
+        setConfirmCancelSale(null);
+        setCanjeReceivedUnits([]);
+        setDeleteCanjeUnit(true);
+    };
+
+    const proceedCancelSale = async () => {
+        if (!confirmCancelSale) return;
+        try {
+            setConfirmCancelProcessing(true);
+
+            // Fetch sale items to return stock
+            const { data: saleItems, error: itemsErr } = await supabase
+                .from("sale_items")
+                .select("id, variant_id, quantity")
+                .eq("sale_id", confirmCancelSale.sale_id);
+
+            if (itemsErr) throw itemsErr;
+
+            // Return stock per item
+            for (const item of (saleItems || [])) {
+                if (item.variant_id) {
+                    // Increment variant stock
+                    const { data: variant, error: vErr } = await supabase
+                        .from("product_variants")
+                        .select("stock")
+                        .eq("id", item.variant_id)
+                        .single();
+                    if (vErr) throw vErr;
+
+                    const { error: upErr } = await supabase
+                        .from("product_variants")
+                        .update({ stock: (variant?.stock || 0) + item.quantity })
+                        .eq("id", item.variant_id);
+                    if (upErr) throw upErr;
+                }
+
+                // For serial-tracked items: reset inventory_units linked via sale_item_imeis
+                const { data: imeis } = await supabase
+                    .from("sale_item_imeis")
+                    .select("inventory_unit_id")
+                    .eq("sale_item_id", item.id);
+
+                for (const row of (imeis || [])) {
+                    const { error: iuErr } = await supabase
+                        .from("inventory_units")
+                        .update({
+                            status: "available",
+                            sale_id: null,
+                            sale_item_id: null,
+                            sold_at: null,
+                            returned_at: new Date().toISOString(),
+                        })
+                        .eq("id", row.inventory_unit_id);
+                    if (iuErr) throw iuErr;
+
+                    const { error: evErr } = await supabase
+                        .from("inventory_unit_events")
+                        .insert({
+                            inventory_unit_id: row.inventory_unit_id,
+                            event_type: "sale_cancelled",
+                            from_status: "sold",
+                            to_status: "available",
+                            notes: `Venta #${confirmCancelSale.sale_id} cancelada`,
+                        });
+                    if (evErr) throw evErr;
+                }
+            }
+
+            // Eliminar unidad recibida por canje si se eligió
+            if (deleteCanjeUnit && canjeReceivedUnits.length > 0) {
+                for (const canjeUnit of canjeReceivedUnits) {
+                    await supabase.from("inventory_units").delete().eq("id", canjeUnit.id);
+                }
+            }
+
+            // Update sale status
+            const { error } = await supabase
+                .from("sales")
+                .update({ status: "cancelado" })
+                .eq("id", confirmCancelSale.sale_id);
+            if (error) throw error;
+
+            toast.success("Venta cancelada correctamente y stock devuelto");
+            window.dispatchEvent(new Event("sale-cancelled"));
+            closeConfirmCancelDialog();
+            load();
+        } catch (err) {
+            toast.error("No se pudo cancelar la venta", {
+                description: err?.message,
+            });
+        } finally {
+            setConfirmCancelProcessing(false);
+        }
     };
 
     const proceedToBucketSelection = () => {
@@ -894,6 +916,8 @@ export function SalesList() {
     const closeBucketDialog = () => {
         setBucketOpen(false);
         setSelectedBucket("available");
+        setCanjeReceivedUnits([]);
+        setDeleteCanjeUnit(true);
     };
 
     const completeCancelSale = async () => {
@@ -901,83 +925,17 @@ export function SalesList() {
 
         try {
             setCancelingProcess(true);
-            const { data: salePayments, error: salePaymentsError } = await supabase
-                .from("sale_payments")
-                .select("id, sale_id, account_id, amount_ars, amount_usd, created_at")
-                .eq("sale_id", cancelingSale.sale_id);
-
-            if (salePaymentsError) throw salePaymentsError;
-
-            const salePaymentIds = (salePayments || []).map((payment) => payment.id);
-            let paymentMovementsMap = new Map();
-
-            if (salePaymentIds.length > 0) {
-                const { data: paymentMovements, error: paymentMovementsError } = await supabase
-                    .from("account_movements")
-                    .select("related_id, movement_date, amount, currency, amount_ars, accreditation_status, available_on")
-                    .eq("related_table", "sale_payments")
-                    .in("related_id", salePaymentIds);
-
-                if (paymentMovementsError) throw paymentMovementsError;
-
-                paymentMovementsMap = new Map(
-                    (paymentMovements || []).map((movement) => [movement.related_id, movement])
-                );
-            }
-
             const { error } = await supabase.rpc("void_sale", {
                 p_sale_id: cancelingSale.sale_id,
                 p_reason: cancelReason,
                 p_bucket: selectedBucket,
+                p_delete_canje_unit: deleteCanjeUnit,
             });
 
             if (error) throw error;
 
-            const historyMovements = (salePayments || [])
-                .filter((payment) => payment.account_id)
-                .map((payment) =>
-                    buildSaleMovementHistory(
-                        payment,
-                        paymentMovementsMap.get(payment.id)
-                    )
-                );
-
-            if (historyMovements.length > 0) {
-                const { error: historyError } = await supabase
-                    .from("account_movements")
-                    .insert(historyMovements);
-
-                if (historyError) {
-                    throw new Error(
-                        `La venta se anuló, pero no se pudo preservar el historial del cobro: ${historyError.message}`
-                    );
-                }
-            }
-
-            const reversalMovements = (salePayments || [])
-                .filter((payment) => payment.account_id)
-                .map((payment) =>
-                    buildSaleReversalMovement(
-                        payment,
-                        cancelingSale.sale_id,
-                        cancelReason,
-                        paymentMovementsMap.get(payment.id)
-                    )
-                );
-
-            if (reversalMovements.length > 0) {
-                const { error: reversalError } = await supabase
-                    .from("account_movements")
-                    .insert(reversalMovements);
-
-                if (reversalError) {
-                    throw new Error(
-                        `La venta se anuló, pero no se pudo registrar el movimiento inverso: ${reversalError.message}`
-                    );
-                }
-            }
-
             toast.success("Venta anulada correctamente");
+            window.dispatchEvent(new Event("sale-cancelled"));
             closeBucketDialog();
             setCancelingS(null);
             setCancelReason("");
@@ -1040,8 +998,8 @@ export function SalesList() {
             toast.error("Solo owner o superadmin puede gestionar garantias");
             return;
         }
-        if (sale.status === "anulado") {
-            toast.error("No se puede gestionar garantia sobre una venta anulada");
+        if (sale.status === "anulado" || sale.status === "cancelado") {
+            toast.error("No se puede gestionar garantia sobre una venta anulada o cancelada");
             return;
         }
 
@@ -1305,272 +1263,7 @@ export function SalesList() {
 
     // 📄 Generar PDF de venta
     const handleDownloadSalePDF = (sale) => {
-        try {
-            const doc = new jsPDF();
-            const margin = 14;
-            const pageWidth = doc.internal.pageSize.getWidth();
-            const contentWidth = pageWidth - margin * 2;
-            let y = margin;
-            const saleWarranties = warrantiesBySale[sale.sale_id] || [];
-
-            // Logo
-            const logoWidth = 22;
-            const logoHeight = 22;
-            const logoX = pageWidth - logoWidth - margin;
-            doc.addImage("/toexi.jpg", "JPEG", logoX - 2, margin - 8, logoWidth, logoHeight);
-
-            // Encabezado
-            doc.setFontSize(22);
-            doc.setFont("helvetica", "bold");
-            doc.text("COMPROBANTE DE VENTA", margin, y);
-
-            doc.setFontSize(10);
-            doc.setFont("helvetica", "normal");
-            doc.text(`N°: VTA-${String(sale.sale_id).padStart(6, "0")}`, margin, y + 6);
-
-            y += 26;
-
-            // Cliente / Fechas
-            const fecha = new Date(sale.sale_date).toLocaleDateString("es-AR", {
-                timeZone: AR_TIMEZONE,
-            });
-
-            doc.setFontSize(11);
-            doc.rect(margin, y, 180, 22);
-
-            doc.text("Fecha:", margin + 4, y + 6);
-            doc.text(fecha, margin + 40, y + 6);
-
-            doc.text("Cliente:", margin + 4, y + 12);
-            doc.text(
-                `${sale.customer_name} ${sale.customer_last_name} (Tel: ${sale.customer_phone || "-"})`,
-                margin + 40,
-                y + 12
-            );
-
-            y += 30;
-
-            // Vendedor
-            const vendedorNombre = sale.seller_name && sale.seller_name.trim()
-                ? `${sale.seller_name}${sale.seller_last_name ? ' ' + sale.seller_last_name : ''} (Tel: ${sale.seller_phone || "-"}) `
-                : "Toexi Tech";
-
-            doc.setFontSize(11);
-            doc.rect(margin, y, 180, 16);
-
-            doc.text("Vendedor:", margin + 4, y + 6);
-            doc.text(vendedorNombre, margin + 40, y + 6);
-
-            y += 24;
-            autoTable(doc, {
-                startY: y,
-                headStyles: {
-                    fillColor: [255, 255, 255],
-                    textColor: [0, 0, 0],
-                    fontSize: 10,
-                    fontStyle: "bold",
-                    lineWidth: 0.3,
-                    lineColor: [0, 0, 0],
-                },
-                bodyStyles: {
-                    fontSize: 10,
-                    lineWidth: 0.3,
-                    lineColor: [0, 0, 0],
-                },
-                head: [["Producto", "Variante", "Color", "Cant", "IMEI/s", "Subtotal USD", "Subtotal ARS"]],
-                body: sale.items?.map((i) => [
-                    i.is_gift ? `${i.product_name} (REGALO)` : i.product_name,
-                    i.variant_name || "Modelo Base",
-                    i.color || "-",
-                    i.quantity,
-                    (i.imeis || []).join("\n"),
-                    i.is_gift ? "USD 0.00" : `USD ${(i.subtotal_usd || i.usd_price * i.quantity).toFixed(2)}`,
-                    i.is_gift ? "$0" : `$ ${Number(i.subtotal_ars).toLocaleString("es-AR")}`,
-                ]) || [],
-                columnStyles: {
-                    0: { cellWidth: 32 },
-                    1: { cellWidth: 32 },
-                    2: { cellWidth: 18 },
-                    3: { cellWidth: 12 },
-                    4: { cellWidth: 30 },
-                    5: { halign: "right", cellWidth: 30 },
-                    6: { halign: "right", cellWidth: 26 },
-                },
-                theme: "plain",
-                margin: { top: 0, right: 0, bottom: 0, left: margin },
-                didDrawCell: (data) => {
-                    const { table, row, column } = data;
-                    const totalRows = table.body.length;
-                    const totalCols = table.columns.length;
-
-                    if (row.index === 0 && column.index === 0) {
-                        data.cell.styles.lineWidth = [0, 0.3, 0.3, 0];
-                    } else if (row.index === 0 && column.index === totalCols - 1) {
-                        data.cell.styles.lineWidth = [0, 0, 0.3, 0.3];
-                    } else if (row.index === totalRows - 1 && column.index === 0) {
-                        data.cell.styles.lineWidth = [0.3, 0.3, 0, 0];
-                    } else if (row.index === totalRows - 1 && column.index === totalCols - 1) {
-                        data.cell.styles.lineWidth = [0.3, 0, 0, 0.3];
-                    } else if (row.index === 0) {
-                        data.cell.styles.lineWidth = [0, 0.3, 0.3, 0.3];
-                    } else if (row.index === totalRows - 1) {
-                        data.cell.styles.lineWidth = [0.3, 0.3, 0, 0.3];
-                    } else if (column.index === 0) {
-                        data.cell.styles.lineWidth = [0.3, 0.3, 0.3, 0];
-                    } else if (column.index === totalCols - 1) {
-                        data.cell.styles.lineWidth = [0.3, 0, 0.3, 0.3];
-                    } else {
-                        data.cell.styles.lineWidth = [0.3, 0.3, 0.3, 0.3];
-                    }
-                }
-            });
-
-            y = doc.lastAutoTable.finalY + 10;
-
-            // Resumen financiero
-            doc.setFontSize(11);
-            doc.setFont("helvetica", "normal");
-
-            // doc.text(`Subtotal USD: USD ${sale.total_usd?.toFixed(2) || "0.00"}`, margin, y);
-            // y += 6;
-
-            const subtotalWithSurcharge =
-                Number(sale.total_ars) + Number(sale.discount_amount || 0);
-
-            doc.text(
-                `Subtotal: $ ${subtotalWithSurcharge.toLocaleString("es-AR")}`,
-                margin,
-                y
-            );
-            y += 6;
-
-            if (Number(sale.discount_amount) > 0) {
-                doc.text(
-                    `Descuento aplicado: -$ ${Number(sale.discount_amount).toLocaleString("es-AR")}`,
-                    margin,
-                    y
-                );
-                y += 6;
-            }
-
-            // doc.setFontSize(14);
-            // doc.setFont("helvetica", "bold");
-            // doc.setTextColor(0, 100, 200);
-            // doc.text(
-            //     `TOTAL: $ ${Number(sale.total_ars).toLocaleString("es-AR")}`,
-            //     margin,
-            //     y
-            // );
-            // y += 14;
-
-            doc.text(`Cotización aplicada: $ ${sale.fx_rate_used}`, margin, y);
-            y += 14;
-
-            doc.setFontSize(14);
-            doc.setFont("helvetica", "bold");
-            doc.setTextColor(0, 100, 200);
-            doc.text(`TOTAL: $ ${Number(sale.total_ars).toLocaleString("es-AR")}`, margin, y);
-
-            y += 14;
-
-            // Métodos de pago
-            doc.setFontSize(11);
-            doc.setTextColor(0);
-            doc.setFont("helvetica", "bold");
-            doc.text("Formas de Pago:", margin, y);
-            y += 6;
-
-            doc.setFont("helvetica", "normal");
-            doc.setFontSize(10);
-            sale.payments?.forEach((p) => {
-                doc.text(
-                    `• ${p.payment_method_name}${p.installments ? ` (${p.installments} cuotas)` : ""}: $ ${Number(p.amount_ars).toLocaleString("es-AR")}`,
-                    margin,
-                    y
-                );
-                y += 5;
-            });
-
-            const noteLines = doc.splitTextToSize(`Nota: ${sale.notes || "-"}`, contentWidth);
-            doc.text(noteLines, margin, y += 8);
-            y += noteLines.length * 5;
-
-            if (saleWarranties.length > 0) {
-                y += 3;
-                doc.setFont("helvetica", "bold");
-                doc.text("Detalle de garantia:", margin, y);
-                y += 6;
-
-                autoTable(doc, {
-                    startY: y,
-                    headStyles: {
-                        fillColor: [255, 255, 255],
-                        textColor: [0, 0, 0],
-                        fontSize: 9,
-                        fontStyle: "bold",
-                        lineWidth: 0.3,
-                        lineColor: [0, 0, 0],
-                    },
-                    bodyStyles: {
-                        fontSize: 9,
-                        lineWidth: 0.3,
-                        lineColor: [0, 0, 0],
-                    },
-                    head: [["Equipo original", "IMEI devuelto", "Reemplazo", "IMEI nuevo", "Cant", "Pago diferencia"]],
-                    body: buildWarrantyPdfRows(saleWarranties),
-                    columnStyles: {
-                        0: { cellWidth: 34 },
-                        1: { cellWidth: 26 },
-                        2: { cellWidth: 34 },
-                        3: { cellWidth: 26 },
-                        4: { halign: "center", cellWidth: 14 },
-                        5: { cellWidth: 36 },
-                    },
-                    theme: "plain",
-                    margin: { top: 0, right: 0, bottom: 0, left: margin },
-                });
-
-                y = doc.lastAutoTable.finalY + 6;
-                doc.setFont("helvetica", "normal");
-                const warrantyLines = buildWarrantyPdfLines(saleWarranties).flatMap((line) =>
-                    doc.splitTextToSize(line, contentWidth),
-                );
-                doc.text(warrantyLines, margin, y);
-                y += warrantyLines.length * 5;
-            }
-
-
-            // =============================
-            //  FOOTER LEGAL + DATOS EMPRESA
-            // =============================
-            const pageHeight = doc.internal.pageSize.getHeight();
-            const footerCenter = pageWidth / 2;
-
-            let fY = pageHeight - 24;
-
-            doc.setFontSize(10);
-            doc.setFont("helvetica", "bold");
-            doc.setTextColor(60);
-            doc.text("TOEXI TECH", footerCenter, fY, { align: "center" });
-
-            doc.setFont("helvetica", "normal");
-            doc.setFontSize(9);
-
-            doc.text("Teléfono: 381 364 5246", footerCenter, fY + 5, { align: "center" });
-            doc.text("Instagram: @toexi.tech", footerCenter, fY + 10, { align: "center" });
-
-            // Legal
-            doc.setFontSize(8);
-            doc.setTextColor(120);
-            doc.text("Gracias por su compra", footerCenter, fY + 17, { align: "center" });
-
-            doc.save(`venta_${sale.sale_id}.pdf`);
-            toast.success("PDF descargado correctamente");
-
-        } catch (err) {
-            console.error("Error generando PDF:", err);
-            toast.error("Error al generar PDF");
-        }
+        generateSalePDF(sale, warrantiesBySale);
     };
 
     return (
@@ -1619,6 +1312,25 @@ export function SalesList() {
                     >
                         Semana actual
                     </Button>
+
+                    {/* Filtro por estado */}
+                    <Select
+                        value={filters.status || "all"}
+                        onValueChange={(val) =>
+                            setFilters((f) => ({ ...f, status: val === "all" ? "" : val }))
+                        }
+                    >
+                        <SelectTrigger className="w-[140px]">
+                            <SelectValue placeholder="Estado" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="all">Todos</SelectItem>
+                            <SelectItem value="vendido">Vendido</SelectItem>
+                            <SelectItem value="pending">Pendiente</SelectItem>
+                            <SelectItem value="anulado">Anulado</SelectItem>
+                            <SelectItem value="cancelado">Cancelado</SelectItem>
+                        </SelectContent>
+                    </Select>
                 </div>
 
                 {/* ------- FILA 2 SOLO EN MOBILE, MISMA FILA EN LG+ ------- */}
@@ -1661,16 +1373,32 @@ export function SalesList() {
                     const updatedFields = normalizeUpdatedFields(s.updated_fields);
                     const saleWarranties = warrantiesBySale[s.sale_id] || [];
                     return (
-                    <Card key={s.sale_id} className="p-5 shadow-md w-full">
+                    <Card key={s.sale_id} className={`p-5 shadow-md w-full ${
+                        s.status === "pending"
+                            ? "border-l-4 border-l-yellow-400 bg-yellow-50/50 dark:bg-yellow-950/10 opacity-75"
+                            : s.status === "anulado"
+                                ? "border-l-4 border-l-red-400 bg-red-50/50 dark:bg-red-950/10 opacity-60"
+                                : s.status === "cancelado"
+                                    ? "border-l-4 border-l-orange-400 bg-orange-50/50 dark:bg-orange-950/10 opacity-70"
+                                    : ""
+                    }`}>
                         <div className="flex justify-between">
-                            <h2 className="font-bold text-lg">Venta #{s.sale_id}</h2>
+                            <h2 className="font-bold text-lg">
+                                {s.sale_type === "canje" ? "Canje" : "Venta"} #{s.sale_id}
+                            </h2>
                             <span className="text-sm text-muted-foreground">
                                 {new Date(s.sale_date).toLocaleString("es-AR", {
                                     timeZone: AR_TIMEZONE,
+                                    hour12: false,
                                 })}
                             </span>
                         </div>
                         <div className="flex items-center gap-3 mt-2 flex-wrap">
+                            {s.sale_type === "canje" && (
+                                <Badge className="bg-purple-100 text-purple-800 border-purple-300 dark:bg-purple-950/50 dark:text-purple-200 dark:border-purple-800">
+                                    CANJE
+                                </Badge>
+                            )}
                             {s.status && (
                                 <div className="flex items-center gap-2">
                                     <span className="text-xs text-muted-foreground">
@@ -1681,10 +1409,12 @@ export function SalesList() {
                                             s.status === "anulado" ? "destructive" : "default"
                                         }
                                         className={
-                                            s.status === "pending" ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-950/20 dark:text-yellow-400" : ""
+                                            s.status === "pending" ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-950/20 dark:text-yellow-400"
+                                            : s.status === "cancelado" ? "bg-orange-100 text-orange-800 dark:bg-orange-950/20 dark:text-orange-400"
+                                            : ""
                                         }
                                     >
-                                        {s.status === "anulado" ? "ANULADA" : s.status === "pending" ? "PENDIENTE" : s.status}
+                                        {s.status === "anulado" ? "ANULADA" : s.status === "pending" ? "PENDIENTE" : s.status === "cancelado" ? "CANCELADA" : s.status.toUpperCase()}
                                     </Badge>
                                 </div>
                             )}
@@ -1699,6 +1429,12 @@ export function SalesList() {
                                 </div>
                             )}
                         </div>
+
+                        {s.status === "pending" && (
+                            <p className="text-xs text-yellow-600 dark:text-yellow-400 mt-2 font-medium">
+                                Esta venta no fue concretada. Solo puede cancelarse.
+                            </p>
+                        )}
 
                         <hr className="my-3" />
 
@@ -1734,14 +1470,28 @@ export function SalesList() {
                                             {i.is_gift ? "$0" : `$${Number(i.subtotal_ars ?? 0).toLocaleString("es-AR")}`}
                                         </span>
                                     </div>
-                                    {i.imei && i.imei.toString().trim() !== "" && <div className="text-xs text-muted-foreground">IMEI: {i.imei}</div>}
+                                    {i.imeis && i.imeis.length > 0 && (
+                                        <div className="text-xs text-muted-foreground">
+                                            {i.imeis.length === 1 
+                                                ? `IMEI: ${i.imeis[0]}`
+                                                : `IMEIs: ${i.imeis.join(", ")}`
+                                            }
+                                        </div>
+                                    )}
                                 </div>
                             ))}
                         </div>
 
-                        {/* Pagos */}
+                        {/* Pagos (solo si no está pendiente) */}
+                        {s.status !== "pending" && (
                         <div className="text-sm border rounded p-3 mt-3 bg-muted/40">
                             <strong>Métodos de pago:</strong>
+                            {s.sale_type === "canje" && s.trade_in_data && (
+                                <div className="flex justify-between border-b py-1 text-green-600">
+                                    <span>Crédito canje ({s.trade_in_data.product_name} {s.trade_in_data.variant_name})</span>
+                                    <span>-${Number(s.trade_in_data.amount_ars || 0).toLocaleString("es-AR")}</span>
+                                </div>
+                            )}
                             {s.payments?.map((p, idx) => (
                                 <div key={idx} className="flex justify-between border-b last:border-0 py-1">
                                     <span>
@@ -1752,6 +1502,7 @@ export function SalesList() {
                                 </div>
                             ))}
                         </div>
+                        )}
 
                         {s.notes && (
                             <div className="text-sm border rounded p-3 mt-3 bg-muted/40">
@@ -1771,6 +1522,7 @@ export function SalesList() {
                                         {s.updated_at
                                             ? new Date(s.updated_at).toLocaleString("es-AR", {
                                                 timeZone: AR_TIMEZONE,
+                                                hour12: false,
                                             })
                                             : "-"}
                                     </p>
@@ -1814,6 +1566,7 @@ export function SalesList() {
                                         {s.voided_at
                                             ? new Date(s.voided_at).toLocaleString("es-AR", {
                                                 timeZone: AR_TIMEZONE,
+                                                hour12: false,
                                             })
                                             : "-"}
                                     </p>
@@ -1846,6 +1599,7 @@ export function SalesList() {
                                                 {warranty.created_at
                                                     ? new Date(warranty.created_at).toLocaleString("es-AR", {
                                                           timeZone: AR_TIMEZONE,
+                                                          hour12: false,
                                                       })
                                                     : "-"}
                                             </p>
@@ -1983,7 +1737,7 @@ export function SalesList() {
                                         variant="outline"
                                         size="sm"
                                         onClick={() => openEditSale(s)}
-                                        disabled={s.status === "anulado"}
+                                        disabled={s.status === "anulado" || s.status === "pending"}
                                     >
                                         Editar venta
                                     </Button>
@@ -1993,10 +1747,19 @@ export function SalesList() {
                                         variant="secondary"
                                         size="sm"
                                         onClick={() => openWarrantyDialog(s)}
-                                        disabled={s.status === "anulado"}
+                                        disabled={s.status === "anulado" || s.status === "pending"}
                                     >
                                         <IconShieldCheck className="mr-2 h-4 w-4" />
                                         Garantia
+                                    </Button>
+                                    )}
+                                    {canManageSaleActions && s.status === "pending" && (
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => startConfirmCancelSale(s)}
+                                    >
+                                        Cancelar venta
                                     </Button>
                                     )}
                                     {canManageSaleActions && (
@@ -2004,7 +1767,7 @@ export function SalesList() {
                                         variant="destructive"
                                         size="sm"
                                         onClick={() => startCancelSale(s)}
-                                        disabled={s.status === "anulado"}
+                                        disabled={s.status === "anulado" || s.status === "pending"}
                                     >
                                         Anular venta
                                     </Button>
@@ -2015,6 +1778,7 @@ export function SalesList() {
                                 onClick={() => handleDownloadSalePDF(s)}
                                 size="sm"
                                 className="gap-2"
+                                disabled={s.status === "pending"}
                             >
                                 <IconDownload className="h-4 w-4" />
                                 Descargar PDF
@@ -2193,6 +1957,7 @@ export function SalesList() {
                                 {warrantySale?.sale_date
                                     ? new Date(warrantySale.sale_date).toLocaleString("es-AR", {
                                           timeZone: AR_TIMEZONE,
+                                          hour12: false,
                                       })
                                     : "-"}
                             </p>
@@ -2714,6 +2479,26 @@ export function SalesList() {
                                 </div>
                             </label>
                         </div>
+
+                        {canjeReceivedUnits.length > 0 && (
+                            <div className="space-y-2 p-3 border rounded-lg bg-purple-50 dark:bg-purple-950/30">
+                                <p className="text-sm font-medium text-purple-700 dark:text-purple-300">
+                                    Unidad recibida por canje
+                                </p>
+                                {canjeReceivedUnits.map((unit) => (
+                                    <p key={unit.id} className="text-sm text-muted-foreground">
+                                        {unit.identifier_value || `Unidad #${unit.id}`}
+                                    </p>
+                                ))}
+                                <label className="flex items-center gap-2 mt-2 cursor-pointer">
+                                    <Checkbox
+                                        checked={deleteCanjeUnit}
+                                        onCheckedChange={(v) => setDeleteCanjeUnit(!!v)}
+                                    />
+                                    <span className="text-sm">Eliminar unidad ingresada por canje</span>
+                                </label>
+                            </div>
+                        )}
                     </div>
 
                     <DialogFooter>
@@ -2726,6 +2511,61 @@ export function SalesList() {
                             disabled={cancelingProcess}
                         >
                             {cancelingProcess ? "Anulando..." : "Confirmar anulación"}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Dialog confirmar cancelar venta */}
+            <Dialog open={confirmCancelOpen} onOpenChange={(open) => {
+                if (!open) closeConfirmCancelDialog();
+            }}>
+                <DialogContent className="max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>Cancelar venta</DialogTitle>
+                    </DialogHeader>
+
+                    <div className="space-y-4">
+                        <p className="text-sm text-muted-foreground">
+                            Esta acción cancelará la venta y devolverá el stock al inventario. No se revierte dinero (la venta no fue cobrada).
+                        </p>
+                        {confirmCancelSale && (
+                            <p className="text-sm">
+                                Venta <strong>#{confirmCancelSale.sale_id}</strong> de{" "}
+                                <strong>{formatPersonName(confirmCancelSale.customer_name, confirmCancelSale.customer_last_name)}</strong>
+                            </p>
+                        )}
+                        {canjeReceivedUnits.length > 0 && (
+                            <div className="space-y-2 p-3 border rounded-lg bg-purple-50 dark:bg-purple-950/30">
+                                <p className="text-sm font-medium text-purple-700 dark:text-purple-300">
+                                    Unidad recibida por canje
+                                </p>
+                                {canjeReceivedUnits.map((unit) => (
+                                    <p key={unit.id} className="text-sm text-muted-foreground">
+                                        {unit.identifier_value || `Unidad #${unit.id}`}
+                                    </p>
+                                ))}
+                                <label className="flex items-center gap-2 mt-2 cursor-pointer">
+                                    <Checkbox
+                                        checked={deleteCanjeUnit}
+                                        onCheckedChange={(v) => setDeleteCanjeUnit(!!v)}
+                                    />
+                                    <span className="text-sm">Eliminar unidad ingresada por canje</span>
+                                </label>
+                            </div>
+                        )}
+                    </div>
+
+                    <DialogFooter>
+                        <Button variant="outline" onClick={closeConfirmCancelDialog}>
+                            Volver
+                        </Button>
+                        <Button
+                            variant="destructive"
+                            onClick={proceedCancelSale}
+                            disabled={confirmCancelProcessing}
+                        >
+                            {confirmCancelProcessing ? "Cancelando..." : "Confirmar"}
                         </Button>
                     </DialogFooter>
                 </DialogContent>

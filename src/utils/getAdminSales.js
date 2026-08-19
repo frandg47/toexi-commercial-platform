@@ -16,5 +16,8 @@ export async function getAdminSales(page, filters = {}) {
   if (filters.seller_id)
     query = query.eq("seller_id", filters.seller_id);
 
+  if (filters.status)
+    query = query.eq("status", filters.status);
+
   return await query;
 }
