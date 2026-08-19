@@ -96,6 +96,7 @@ export default function CashRegisterPage() {
     closeStaleRegister,
     registerMovement,
     collectPendingSale,
+    payoutPendingSale,
     loadHistory,
     loadEfectivoAccounts,
     loadVirtualAccounts,
@@ -248,7 +249,12 @@ export default function CashRegisterPage() {
   };
 
   const handleCollectPendingSale = async (saleId, paymentData) => {
-    const result = await collectPendingSale(saleId, paymentData);
+    let result;
+    if (paymentData.isPayout) {
+      result = await payoutPendingSale(saleId, paymentData);
+    } else {
+      result = await collectPendingSale(saleId, paymentData);
+    }
     if (result?.ok) {
       await loadHistory();
     }
@@ -604,6 +610,7 @@ export default function CashRegisterPage() {
           exchangeRate={exchangeRate}
           usdtRate={usdtRate}
           virtualAccounts={virtualAccounts}
+          cajaAccounts={[...efectivoAccounts, ...virtualAccounts]}
         />
       )}
 

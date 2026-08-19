@@ -32,7 +32,7 @@ import { toast } from "sonner";
 import { supabase } from "@/lib/supabaseClient";
 import { generateSalePDF } from "@/utils/generateSalePDF";
 
-export default function DialogCollectSale({ open, onOpenChange, sale, onConfirm, loading, exchangeRate, usdtRate, tradeInCredit = 0, virtualAccounts = [] }) {
+export default function DialogCollectSale({ open, onOpenChange, sale, onConfirm, loading, exchangeRate, usdtRate, tradeInCredit = 0, virtualAccounts = [], cajaAccounts = [] }) {
   const [paymentMethods, setPaymentMethods] = useState([]);
   const [paymentInstallments, setPaymentInstallments] = useState([]);
 
@@ -44,6 +44,7 @@ export default function DialogCollectSale({ open, onOpenChange, sale, onConfirm,
   const [collectionSuccess, setCollectionSuccess] = useState(false);
   const [collectedPaymentData, setCollectedPaymentData] = useState(null);
   const [sellerData, setSellerData] = useState(null);
+  const [payoutAccountId, setPayoutAccountId] = useState("");
 
   useEffect(() => {
     if (!open) return;
@@ -67,6 +68,7 @@ export default function DialogCollectSale({ open, onOpenChange, sale, onConfirm,
       setCollectionSuccess(false);
       setCollectedPaymentData(null);
       setSellerData(null);
+      setPayoutAccountId("");
 
       if (sale.seller_id) {
         supabase
@@ -103,7 +105,7 @@ export default function DialogCollectSale({ open, onOpenChange, sale, onConfirm,
     return { amount, currency, amountARS };
   }, [sale, exchangeRate]);
 
-  const totalDue = useMemo(() => Math.max(totalAfterAdjustments - depositData.amountARS - tradeInCredit, 0), [totalAfterAdjustments, depositData.amountARS, tradeInCredit]);
+  const totalDue = useMemo(() => totalAfterAdjustments - depositData.amountARS - tradeInCredit, [totalAfterAdjustments, depositData.amountARS, tradeInCredit]);
 
   const getPaymentDisplayCurrency = (methodName) => {
     const upper = methodName?.toUpperCase();
@@ -194,6 +196,38 @@ export default function DialogCollectSale({ open, onOpenChange, sale, onConfirm,
   const handleConfirm = async () => {
     if (!sale) return;
 
+    // Caso: diferencia a favor del cliente (pago al cliente)
+    if (totalDue < 0) {
+      if (!payoutAccountId) {
+        toast.error("Seleccioná la cuenta de origen para el pago");
+        return;
+      }
+      const payoutAccount = cajaAccounts.find((a) => String(a.id) === String(payoutAccountId));
+      const payoutData = {
+        isPayout: true,
+        payout_account_id: Number(payoutAccountId),
+        payout_amount_ars: Math.abs(totalDue),
+        payout_account_name: payoutAccount?.name || "",
+        notes,
+      };
+      const result = await onConfirm(payoutData);
+      if (result?.ok) {
+        setCollectionSuccess(true);
+        setCollectedPaymentData({
+          ...payoutData,
+          payments: [],
+          total_ars: Math.abs(totalDue),
+          discount_amount: 0,
+          surcharge_amount: 0,
+          accreditationAudit: result.accreditationAudit || [],
+        });
+      } else {
+        toast.error(result?.error || "No se pudo registrar el pago");
+      }
+      return;
+    }
+
+    // Caso normal: cobro al cliente
     const normalized = payments
       .map((p) => {
         const amount = Number(p.amount || 0);
@@ -317,20 +351,24 @@ export default function DialogCollectSale({ open, onOpenChange, sale, onConfirm,
   };
 
   const handleClose = () => {
-    toast.success("Venta cobrada y registrada en caja");
+    const isPayout = collectedPaymentData?.isPayout;
+    toast.success(isPayout ? "Pago al cliente registrado" : "Venta cobrada y registrada en caja");
     onOpenChange(false);
   };
 
   if (!sale) return null;
 
   if (collectionSuccess) {
+    const isPayout = collectedPaymentData?.isPayout;
     return (
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle className="text-green-600">Cobro exitoso</DialogTitle>
+            <DialogTitle className="text-green-600">{isPayout ? "Pago registrado" : "Cobro exitoso"}</DialogTitle>
             <DialogDescription>
-              La venta fue cobrada y registrada en caja correctamente.
+              {isPayout
+                ? `Se registró el pago de ${formatARS(collectedPaymentData?.payout_amount_ars || 0)} al cliente desde ${collectedPaymentData?.payout_account_name || "cuenta"}.`
+                : "La venta fue cobrada y registrada en caja correctamente."}
             </DialogDescription>
           </DialogHeader>
 
@@ -338,29 +376,33 @@ export default function DialogCollectSale({ open, onOpenChange, sale, onConfirm,
             <p className="text-sm text-muted-foreground">
               Venta #{String(sale.id).padStart(6, "0")} - {formatARS(collectedPaymentData?.total_ars || 0)}
             </p>
-            <div className="rounded-md border p-3 text-left space-y-2">
-              <p className="text-sm font-medium">Auditoría de acreditación</p>
-              {collectedPaymentData?.accreditationAudit?.map((payment, index) => (
-                <div key={`${payment.method_name}-${index}`} className="text-xs text-muted-foreground">
-                  <div className="flex justify-between gap-2">
-                    <span>{payment.method_name}{payment.installments ? ` (${payment.installments} cuotas)` : ""}</span>
-                    <span className="font-medium text-foreground">{formatAuditAmount(payment.amount, payment.currency)}</span>
+            {!isPayout && (
+              <div className="rounded-md border p-3 text-left space-y-2">
+                <p className="text-sm font-medium">Auditoría de acreditación</p>
+                {collectedPaymentData?.accreditationAudit?.map((payment, index) => (
+                  <div key={`${payment.method_name}-${index}`} className="text-xs text-muted-foreground">
+                    <div className="flex justify-between gap-2">
+                      <span>{payment.method_name}{payment.installments ? ` (${payment.installments} cuotas)` : ""}</span>
+                      <span className="font-medium text-foreground">{formatAuditAmount(payment.amount, payment.currency)}</span>
+                    </div>
+                    <div>
+                      Neto: {formatAuditAmount(payment.net_amount, payment.currency)} · Cuenta: {payment.account_name || "Sin cuenta"}
+                    </div>
+                    <div>
+                      {payment.accreditation_status === "pending"
+                        ? `Pendiente hasta ${payment.available_on}`
+                        : "Acreditación inmediata"}
+                    </div>
                   </div>
-                  <div>
-                    Neto: {formatAuditAmount(payment.net_amount, payment.currency)} · Cuenta: {payment.account_name || "Sin cuenta"}
-                  </div>
-                  <div>
-                    {payment.accreditation_status === "pending"
-                      ? `Pendiente hasta ${payment.available_on}`
-                      : "Acreditación inmediata"}
-                  </div>
-                </div>
-              ))}
-            </div>
-            <Button variant="outline" onClick={handleDownloadReceipt} className="gap-2">
-              <IconDownload className="h-4 w-4" />
-              Descargar comprobante
-            </Button>
+                ))}
+              </div>
+            )}
+            {!isPayout && (
+              <Button variant="outline" onClick={handleDownloadReceipt} className="gap-2">
+                <IconDownload className="h-4 w-4" />
+                Descargar comprobante
+              </Button>
+            )}
           </div>
 
           <DialogFooter>
@@ -493,10 +535,12 @@ export default function DialogCollectSale({ open, onOpenChange, sale, onConfirm,
             </div>
           </div>
 
-          {/* Métodos de pago */}
-          <h3 className="font-medium">Métodos de Pago</h3>
+          {/* Métodos de pago - solo cuando hay monto a pagar */}
+          {totalDue >= 0 && (
+            <>
+              <h3 className="font-medium">Métodos de Pago</h3>
 
-          {payments.map((p, i) => {
+              {payments.map((p, i) => {
             return (
               <div key={i} className="border p-3 rounded-md space-y-3 bg-muted/40">
                 <div className="flex items-center gap-2">
@@ -631,6 +675,34 @@ export default function DialogCollectSale({ open, onOpenChange, sale, onConfirm,
             <IconCirclePlus className="h-4 w-4 mr-1" />
             Agregar otro pago
           </Button>
+            </>
+          )}
+
+          {/* Sección de pago al cliente - cuando la diferencia es a favor del cliente */}
+          {totalDue < 0 && (
+            <div className="border p-4 rounded-md bg-green-50 dark:bg-green-950/20 space-y-3">
+              <h3 className="font-medium text-green-700 dark:text-green-400">Diferencia a favor del cliente</h3>
+              <p className="text-sm text-muted-foreground">
+                El producto recibido tiene mayor valor. Se debe abonar al cliente:
+              </p>
+              <div className="text-2xl font-bold text-green-600">{formatARS(Math.abs(totalDue))}</div>
+              <div className="space-y-1">
+                <Label className="text-sm">Cuenta de origen</Label>
+                <Select value={payoutAccountId} onValueChange={setPayoutAccountId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Seleccionar cuenta..." />
+                  </SelectTrigger>
+                  <SelectContent className="z-[9999]">
+                    {cajaAccounts.map((acc) => (
+                      <SelectItem key={acc.id} value={String(acc.id)}>
+                        {acc.name} ({acc.currency})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          )}
 
           {/* Totales */}
           <div className="grid grid-cols-2 gap-2 text-sm border-t pt-3">
@@ -708,29 +780,46 @@ export default function DialogCollectSale({ open, onOpenChange, sale, onConfirm,
               </>
             )}
 
-            <div className="text-muted-foreground font-medium border-t mt-2 pt-2">Total a pagar ahora:</div>
-            <div className="text-right font-bold text-primary border-t mt-2 pt-2">{formatARS(totalDue)}</div>
+            {totalDue >= 0 ? (
+              <>
+                <div className="text-muted-foreground font-medium border-t mt-2 pt-2">Total a pagar ahora:</div>
+                <div className="text-right font-bold text-primary border-t mt-2 pt-2">{formatARS(totalDue)}</div>
+              </>
+            ) : (
+              <>
+                <div className="text-green-600 font-medium border-t mt-2 pt-2">A favor del cliente:</div>
+                <div className="text-right font-bold text-green-600 border-t mt-2 pt-2">{formatARS(Math.abs(totalDue))}</div>
+              </>
+            )}
 
-            <div className="text-muted-foreground">Total cobrado:</div>
-            <div className={`text-right font-semibold ${Math.round(paidARS) === Math.round(totalDue) ? "text-green-600" : "text-red-600"}`}>
-              <div>{formatARS(paidARS)}</div>
-              {payments.some((p) => isUSDMethod(p.method_name)) && (
-                <div className="text-xs text-muted-foreground">
-                  {payments.filter((p) => isUSDMethod(p.method_name)).map((p, i) => {
-                    const displayCurrency = getPaymentDisplayCurrency(p.method_name);
-                    const amount = Number(p.amount || 0);
-                    return (
-                      <div key={i}>
-                        {displayCurrency} {amount.toFixed(2)} ({p.method_name})
-                      </div>
-                    );
-                  })}
+            {totalDue >= 0 && (
+              <>
+                <div className="text-muted-foreground">Total cobrado:</div>
+                <div className={`text-right font-semibold ${Math.round(paidARS) === Math.round(totalDue) ? "text-green-600" : "text-red-600"}`}>
+                  <div>{formatARS(paidARS)}</div>
+                  {payments.some((p) => isUSDMethod(p.method_name)) && (
+                    <div className="text-xs text-muted-foreground">
+                      {payments.filter((p) => isUSDMethod(p.method_name)).map((p, i) => {
+                        const displayCurrency = getPaymentDisplayCurrency(p.method_name);
+                        const amount = Number(p.amount || 0);
+                        return (
+                          <div key={i}>
+                            {displayCurrency} {amount.toFixed(2)} ({p.method_name})
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
+              </>
+            )}
 
-            <div className="text-muted-foreground">Base pendiente:</div>
-            <div className={`text-right font-bold ${remaining === 0 ? "text-green-600" : "text-blue-600"}`}>{formatARS(remaining)}</div>
+            {totalDue >= 0 && (
+              <>
+                <div className="text-muted-foreground">Base pendiente:</div>
+                <div className={`text-right font-bold ${remaining === 0 ? "text-green-600" : "text-blue-600"}`}>{formatARS(remaining)}</div>
+              </>
+            )}
           </div>
 
           <Textarea
@@ -744,8 +833,12 @@ export default function DialogCollectSale({ open, onOpenChange, sale, onConfirm,
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
             Cancelar
           </Button>
-          <Button onClick={handleConfirm} disabled={loading || hasMissingAccount}>
-            {loading ? "Procesando..." : "Confirmar cobro"}
+          <Button
+            onClick={handleConfirm}
+            disabled={loading || (totalDue >= 0 && hasMissingAccount) || (totalDue < 0 && !payoutAccountId)}
+            className={totalDue < 0 ? "bg-green-600 hover:bg-green-700" : ""}
+          >
+            {loading ? "Procesando..." : totalDue < 0 ? "Registrar pago al cliente" : "Confirmar cobro"}
           </Button>
         </DialogFooter>
       </DialogContent>

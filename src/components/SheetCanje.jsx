@@ -298,7 +298,7 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
     return cartTotalUsd * (exchangeRate || 0);
   }, [cartTotalUsd, exchangeRate]);
 
-  // Difference (positive = customer owes, 0 = canje completo)
+  // Difference (positive = customer owes, negative = store owes customer, 0 = exact)
   const difference = useMemo(() => {
     return cartTotalArs - receivedArs;
   }, [cartTotalArs, receivedArs]);
@@ -431,7 +431,6 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
     if (!selectedReceivedVariant) return toast.error("Seleccioná el producto recibido");
     if (!receivedAmount || Number(receivedAmount) <= 0) return toast.error("Ingresá el monto cotizado");
     if (cart.length === 0) return toast.error("Agregá al menos un producto a comprar");
-    if (difference < 0) return toast.error("El valor del canje excede el total de la compra");
 
     const isSerial = selectedReceivedVariant.products?.inventory_tracking_mode === "serial";
     if (isSerial && (!receivedImei || !receivedImei.trim())) {
@@ -1040,12 +1039,22 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
                       <span className="text-muted-foreground">Total compra:</span>
                       <span className="font-medium">{formatARS(cartTotalArs)}</span>
                     </div>
-                    <div className="flex justify-between text-sm border-t pt-1">
-                      <span className="font-medium">Diferencia a cobrar:</span>
-                      <span className={`font-bold ${difference >= 0 ? "text-foreground" : "text-red-600"}`}>
-                        {formatARS(difference)}
-                      </span>
-                    </div>
+                    {difference === 0 ? (
+                      <div className="flex justify-between text-sm border-t pt-1">
+                        <span className="font-medium">Canje</span>
+                        <span className="font-bold text-green-600">Exacto</span>
+                      </div>
+                    ) : difference > 0 ? (
+                      <div className="flex justify-between text-sm border-t pt-1">
+                        <span className="font-medium">A cobrar:</span>
+                        <span className="font-bold text-foreground">{formatARS(difference)}</span>
+                      </div>
+                    ) : (
+                      <div className="flex justify-between text-sm border-t pt-1">
+                        <span className="font-medium text-green-600">A favor del cliente:</span>
+                        <span className="font-bold text-green-600">{formatARS(Math.abs(difference))}</span>
+                      </div>
+                    )}
                   </div>
 
                   <div className="space-y-2">

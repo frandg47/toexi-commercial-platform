@@ -13,7 +13,7 @@ import {
 import { IconShoppingCart, IconCoin } from "@tabler/icons-react";
 import DialogCollectSale from "./DialogCollectSale";
 
-export default function PendingSalesSection({ pendingSales, onCollect, loading, exchangeRate, usdtRate, virtualAccounts = [] }) {
+export default function PendingSalesSection({ pendingSales, onCollect, loading, exchangeRate, usdtRate, virtualAccounts = [], cajaAccounts = [] }) {
   const [selectedSale, setSelectedSale] = useState(null);
   const [collectDialogOpen, setCollectDialogOpen] = useState(false);
 
@@ -170,6 +170,7 @@ export default function PendingSalesSection({ pendingSales, onCollect, loading, 
         usdtRate={usdtRate}
         tradeInCredit={getTradeInCredit(selectedSale)}
         virtualAccounts={virtualAccounts}
+        cajaAccounts={cajaAccounts}
       />
     </>
   );

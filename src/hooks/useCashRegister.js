@@ -658,6 +658,94 @@ export function useCashRegister(userId) {
     [currentRegister, loadMovements, loadPendingSales, virtualAccounts, loadEfectivoAccounts, loadVirtualAccounts]
   );
 
+  const payoutPendingSale = useCallback(
+    async (saleId, payoutData) => {
+      if (!currentRegister) return { ok: false, error: "No hay caja abierta" };
+      setLoading(true);
+      try {
+        const { error: saleError } = await supabase
+          .from("sales")
+          .select("id")
+          .eq("id", saleId)
+          .single();
+
+        if (saleError) throw saleError;
+
+        const { error: updateError } = await supabase
+          .from("sales")
+          .update({
+            status: "vendido",
+            payments: [],
+            notes: `Pago al cliente: ${payoutData.notes || ""}`.trim(),
+          })
+          .eq("id", saleId);
+
+        if (updateError) throw updateError;
+
+        const amount = Number(payoutData.payout_amount_ars);
+        const accountId = Number(payoutData.payout_account_id);
+
+        // Crear movimiento de account_movements (expense)
+        const { error: amError } = await supabase
+          .from("account_movements")
+          .insert({
+            account_id: accountId,
+            type: "expense",
+            amount,
+            currency: "ARS",
+            movement_date: new Date().toISOString().slice(0, 10),
+            related_table: "sales",
+            related_id: saleId,
+            notes: `Pago por diferencia de canje - Venta #${saleId}`,
+          });
+
+        if (amError) throw amError;
+
+        // Crear movimiento de caja (expense)
+        const { error: crmError } = await supabase.rpc("register_cash_movement_v2", {
+          p_register_id: currentRegister.id,
+          p_type: "expense",
+          p_amount: amount,
+          p_currency: "ARS",
+          p_notes: `Pago por diferencia de canje - Venta #${saleId}`,
+          p_related_table: "sales",
+          p_related_id: saleId,
+          p_account_id: accountId,
+        });
+
+        if (crmError) throw crmError;
+
+        await loadMovements(currentRegister.id);
+        await loadPendingSales();
+        await loadEfectivoAccounts();
+        await loadVirtualAccounts();
+        return {
+          ok: true,
+          saleId,
+          accreditationAudit: [{
+            method_name: "Pago al cliente",
+            installments: null,
+            currency: "ARS",
+            amount,
+            net_amount: amount,
+            multiplier: 1,
+            account_id: accountId,
+            account_name: payoutData.payout_account_name || "",
+            accreditation_status: "credited",
+            available_on: new Date().toISOString().slice(0, 10),
+            accreditation_delay_business_days: 0,
+          }],
+        };
+      } catch (err) {
+        console.error("Error paying pending sale:", err);
+        return { ok: false, error: err.message };
+      } finally {
+        setLoading(false);
+      }
+    },
+    [currentRegister, loadMovements, loadPendingSales, loadEfectivoAccounts, loadVirtualAccounts]
+  );
+
   const loadHistory = useCallback(
     async (filters = {}) => {
       setLoading(true);
@@ -843,6 +931,7 @@ export function useCashRegister(userId) {
     registerMovement,
     registerSaleInCash,
     collectPendingSale,
+    payoutPendingSale,
     loadMovements,
     loadPendingSales,
     loadHistory,
