@@ -92,6 +92,11 @@ const isMovementPendingAccreditation = (movement) =>
   movement?.available_on &&
   movement.available_on > todayDateKey();
 
+const isCardPaymentName = (name) => {
+  const value = String(name || "").toLowerCase();
+  return value.includes("tarjeta") || value.includes("card") || value.includes("posnet") || value.includes("visa") || value.includes("master");
+};
+
 export default function FinancePage() {
   const { role } = useAuth();
   const isOwner = role?.toLowerCase() === "owner";
@@ -137,10 +142,10 @@ export default function FinancePage() {
       { data: salesChannelsData, error: salesChannelsError },
       { data: salesYearsData, error: salesYearsError },
     ] = await Promise.all([
-      supabase
-        .from("accounts")
-        .select(
-          "id, name, currency, initial_balance, include_in_balance, is_reference_capital",
+        supabase
+          .from("accounts")
+          .select(
+          "id, name, currency, initial_balance, include_in_balance, is_reference_capital, is_efectivo, is_caja_virtual",
         )
         .order("name", { ascending: true }),
       supabase
@@ -161,10 +166,10 @@ export default function FinancePage() {
         .select(
           "quantity, status, sold_sale_id, include_in_stock_cost_balance, variant:product_variants!aftersales_devices_variant_id_fkey(cost_price_usd)",
         ),
-      supabase
-        .from("account_movements")
-        .select(
-          "account_id, type, amount, currency, accreditation_status, available_on",
+        supabase
+          .from("account_movements")
+          .select(
+          "account_id, type, amount, currency, accreditation_status, available_on, related_table, related_id",
         ),
       supabase
         .from("sales_channels")
@@ -238,7 +243,30 @@ export default function FinancePage() {
         description: movementsError.message,
       });
     } else {
-      setBalanceMovementsAll(movementsData || []);
+      const movements = movementsData || [];
+      const salePaymentIds = movements
+        .filter((movement) => movement.related_table === "sale_payments")
+        .map((movement) => movement.related_id)
+        .filter(Boolean);
+      const depositIds = movements
+        .filter((movement) => movement.related_table === "order_deposits")
+        .map((movement) => movement.related_id)
+        .filter(Boolean);
+      const [salePayments, deposits] = await Promise.all([
+        salePaymentIds.length
+          ? supabase.from("sale_payments").select("id, payment_methods(name)").in("id", salePaymentIds)
+          : Promise.resolve({ data: [] }),
+        depositIds.length
+          ? supabase.from("order_deposits").select("id, payment_methods(name)").in("id", depositIds)
+          : Promise.resolve({ data: [] }),
+      ]);
+      const paymentNames = new Map();
+      (salePayments.data || []).forEach((payment) => paymentNames.set(`sale_payments:${payment.id}`, payment.payment_methods?.name || ""));
+      (deposits.data || []).forEach((deposit) => paymentNames.set(`order_deposits:${deposit.id}`, deposit.payment_methods?.name || ""));
+      setBalanceMovementsAll(movements.map((movement) => ({
+        ...movement,
+        payment_method_name: paymentNames.get(`${movement.related_table}:${movement.related_id}`) || "",
+      })));
     }
 
     if (salesChannelsError) {
@@ -1021,35 +1049,34 @@ export default function FinancePage() {
     [buildAccountBalances, balanceMovementsFiltered],
   );
 
-  const totalBalances = useMemo(() => {
-    return accountBalancesAll.reduce(
-      (acc, item) => {
-        if (!item.include_in_balance) return acc;
-        if (item.currency === "USD") acc.usd += item.current_balance;
-        else if (item.currency === "USDT") acc.usdt += item.current_balance;
-        else acc.ars += item.current_balance;
-        return acc;
+  const operationalBalances = useMemo(() => {
+    const result = {
+      cashARS: 0,
+      cashUSD: 0,
+      transfers: { ARS: 0, USD: 0, USDT: 0 },
+      cards: {
+        accredited: { ARS: 0, USD: 0, USDT: 0 },
+        pending: { ARS: 0, USD: 0, USDT: 0 },
       },
-      { ars: 0, usd: 0, usdt: 0 },
-    );
-  }, [accountBalancesAll]);
+    };
 
-  const pendingAccreditations = useMemo(() => {
-    return balanceMovementsAll.reduce(
-      (totals, movement) => {
-        if (!isMovementPendingAccreditation(movement)) return totals;
-        if (movement.type !== "income") return totals;
+    accountBalancesAll.forEach((account) => {
+      if (!account.include_in_balance) return;
+      if (account.is_efectivo && account.currency === "ARS") result.cashARS += account.current_balance;
+      if (account.is_efectivo && account.currency === "USD") result.cashUSD += account.current_balance;
+      if (account.is_caja_virtual) result.transfers[account.currency] = (result.transfers[account.currency] || 0) + account.current_balance;
+    });
 
-        const currency = movement.currency || "ARS";
-        const amount = Number(movement.amount || 0);
-        if (currency === "USD") totals.usd += amount;
-        else if (currency === "USDT") totals.usdt += amount;
-        else totals.ars += amount;
-        return totals;
-      },
-      { ars: 0, usd: 0, usdt: 0 },
-    );
-  }, [balanceMovementsAll]);
+    balanceMovementsAll.forEach((movement) => {
+      if (movement.type !== "income" || !isCardPaymentName(movement.payment_method_name)) return;
+      const currency = movement.currency || "ARS";
+      const amount = Number(movement.amount || 0);
+      const bucket = isMovementPendingAccreditation(movement) ? "pending" : "accredited";
+      if (result.cards[bucket][currency] !== undefined) result.cards[bucket][currency] += amount;
+    });
+
+    return result;
+  }, [accountBalancesAll, balanceMovementsAll]);
 
   const convertAmountToUsd = useCallback(
     (amount, currency) => {
@@ -1110,36 +1137,43 @@ export default function FinancePage() {
       <div className="grid gap-4 md:grid-cols-4">
         <Card className="bg-blue-500">
           <CardHeader>
-            <CardTitle className="text-white">Balance total ARS</CardTitle>
+            <CardTitle className="text-white">Caja efectivo ARS</CardTitle>
           </CardHeader>
           <CardContent className="text-2xl font-semibold text-white">
-            {formatCurrency(totalBalances.ars, "ARS")}
+            {formatCurrency(operationalBalances.cashARS, "ARS")}
           </CardContent>
         </Card>
         <Card className="bg-green-700">
           <CardHeader>
-            <CardTitle className="text-white">Balance total USD</CardTitle>
+            <CardTitle className="text-white">Caja efectivo USD</CardTitle>
           </CardHeader>
           <CardContent className="text-2xl font-semibold text-white">
-            {formatCurrency(totalBalances.usd, "USD")}
+            {formatCurrency(operationalBalances.cashUSD, "USD")}
           </CardContent>
         </Card>
         <Card className="bg-purple-700">
           <CardHeader>
-            <CardTitle className="text-white">Balance total USDT</CardTitle>
+            <CardTitle className="text-white">Transferencias</CardTitle>
           </CardHeader>
-          <CardContent className="text-2xl font-semibold text-white">
-            {formatCurrency(totalBalances.usdt, "USDT")}
+          <CardContent className="space-y-1 text-white">
+            <div className="text-2xl font-semibold">{formatCurrency(operationalBalances.transfers.ARS, "ARS")}</div>
+            <div className="text-xs opacity-90">
+              {formatCurrency(operationalBalances.transfers.USD, "USD")} · {formatCurrency(operationalBalances.transfers.USDT, "USDT")}
+            </div>
           </CardContent>
         </Card>
         <Card className="bg-amber-500">
           <CardHeader>
-            <CardTitle className="text-white">
-              Pendiente acreditacion ARS
-            </CardTitle>
+            <CardTitle className="text-white">Tarjetas</CardTitle>
           </CardHeader>
-          <CardContent className="text-2xl font-semibold text-white">
-            {formatCurrency(pendingAccreditations.ars, "ARS")}
+          <CardContent className="space-y-1 text-white">
+            <div className="text-sm">Acreditado: <b>{formatCurrency(operationalBalances.cards.accredited.ARS, "ARS")}</b></div>
+            <div className="text-sm">Pendiente: <b>{formatCurrency(operationalBalances.cards.pending.ARS, "ARS")}</b></div>
+            {(operationalBalances.cards.accredited.USD || operationalBalances.cards.pending.USD || operationalBalances.cards.accredited.USDT || operationalBalances.cards.pending.USDT) ? (
+              <div className="text-xs opacity-90">
+                USD: {formatCurrency(operationalBalances.cards.accredited.USD, "USD")} / {formatCurrency(operationalBalances.cards.pending.USD, "USD")}
+              </div>
+            ) : null}
           </CardContent>
         </Card>
       </div>
@@ -1518,7 +1552,7 @@ export default function FinancePage() {
       </Card>
 
       <Dialog open={detailDialogOpen} onOpenChange={setDetailDialogOpen}>
-        <DialogContent className="w-[90vw] sm:max-w-3xl max-h-[85svh] overflow-y-auto rounded-2xl p-4 sm:p-6">
+        <DialogContent className="min-w-6xl max-h-[85svh] overflow-y-auto rounded-2xl p-4 sm:p-6">
           <DialogHeader>
             <DialogTitle>Ventas del período {detailMonth}</DialogTitle>
           </DialogHeader>
