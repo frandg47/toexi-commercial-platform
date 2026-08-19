@@ -23,6 +23,7 @@ export function useCashRegister(userId) {
   const [allAccounts, setAllAccounts] = useState([]);
   const [accountMovements, setAccountMovements] = useState([]);
   const [staleOpenRegister, setStaleOpenRegister] = useState(null);
+  const [otherUserOpenRegister, setOtherUserOpenRegister] = useState(null);
   const [cajaBalances, setCajaBalances] = useState({ ARS: 0, USD: 0, USDT: 0 });
 
   const computeCajaBalances = useCallback((movs) => {
@@ -342,6 +343,16 @@ export function useCashRegister(userId) {
         await loadMovements(staleData.id);
         await loadAccountMovements(staleData.id);
       }
+
+      // Buscar si hay caja abierta de OTRO usuario
+      const { data: otherOpenData } = await supabase
+        .from("cash_registers")
+        .select("*, users:user_id(email)")
+        .eq("status", "open")
+        .neq("user_id", userId)
+        .maybeSingle();
+
+      setOtherUserOpenRegister(otherOpenData || null);
 
       await loadPendingSales();
       await loadVirtualAccounts();
@@ -915,6 +926,7 @@ export function useCashRegister(userId) {
     currentRegister,
     isOpen: currentRegister?.status === "open",
     staleOpenRegister,
+    otherUserOpenRegister,
     movements,
     pendingSales,
     history,

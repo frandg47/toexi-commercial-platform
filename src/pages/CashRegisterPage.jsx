@@ -82,6 +82,7 @@ export default function CashRegisterPage() {
     currentRegister,
     isOpen,
     staleOpenRegister,
+    otherUserOpenRegister,
     movements,
     pendingSales,
     history,
@@ -140,6 +141,16 @@ export default function CashRegisterPage() {
       );
     }
   }, [staleOpenRegister, isOpen]);
+
+  // Show toast when another user has an open register
+  useEffect(() => {
+    if (otherUserOpenRegister && !isOpen) {
+      const email = otherUserOpenRegister.users?.email || "otro usuario";
+      toast.warning(
+        `Ya hay una caja abierta por ${email}. Solo puede haber una caja abierta a la vez.`,
+      );
+    }
+  }, [otherUserOpenRegister, isOpen]);
 
   // Fetch FX rates + previous rates for % change
   useEffect(() => {
@@ -454,12 +465,21 @@ export default function CashRegisterPage() {
       <CashRegisterStatus
         register={currentRegister}
         balance={balance}
+        disabled={!!otherUserOpenRegister}
+        disabledReason={otherUserOpenRegister ? `Caja abierta por ${otherUserOpenRegister.users?.email || "otro usuario"}` : undefined}
         onOpen={() => {
           if (staleOpenRegister) {
             toast.error(
               "Tenés una caja abierta de otro día. Cerrala antes de abrir una nueva.",
             );
             setStaleDialogOpen(true);
+            return;
+          }
+          if (otherUserOpenRegister) {
+            const email = otherUserOpenRegister.users?.email || "otro usuario";
+            toast.error(
+              `Ya hay una caja abierta por ${email}. Solo puede haber una caja abierta a la vez.`,
+            );
             return;
           }
           setOpenDialogOpen(true);

@@ -10,21 +10,31 @@ const formatCurrency = (amount, currency) => {
   return new Intl.NumberFormat("es-AR", opts[currency] || opts.ARS).format(amount || 0);
 };
 
-export default function CashRegisterStatus({ register, balance, onOpen, onClick }) {
+export default function CashRegisterStatus({ register, balance, onOpen, onClick, disabled, disabledReason }) {
   if (!register) {
     return (
       <div
-        className="flex items-center gap-3 rounded-lg border border-dashed border-amber-300 bg-amber-50 p-4 cursor-pointer hover:bg-amber-100 transition-colors"
-        onClick={onOpen}
+        className={`flex items-center gap-3 rounded-lg border border-dashed p-4 transition-colors ${
+          disabled
+            ? "border-slate-300 bg-slate-50 cursor-not-allowed opacity-60"
+            : "border-amber-300 bg-amber-50 cursor-pointer hover:bg-amber-100"
+        }`}
+        onClick={disabled ? undefined : onOpen}
       >
-        <IconCash className="h-5 w-5 text-amber-600" />
+        <IconCash className={`h-5 w-5 ${disabled ? "text-slate-400" : "text-amber-600"}`} />
         <div className="flex-1">
-          <p className="text-sm font-medium text-amber-800">Sin caja abierta</p>
-          <p className="text-xs text-amber-600">Hacé clic para abrir la caja de hoy</p>
+          <p className={`text-sm font-medium ${disabled ? "text-slate-500" : "text-amber-800"}`}>
+            {disabled && disabledReason ? disabledReason : "Sin caja abierta"}
+          </p>
+          {!disabled && (
+            <p className="text-xs text-amber-600">Hacé clic para abrir la caja de hoy</p>
+          )}
         </div>
-        <Badge variant="outline" className="border-amber-300 text-amber-700">
-          Abrir
-        </Badge>
+        {!disabled && (
+          <Badge variant="outline" className="border-amber-300 text-amber-700">
+            Abrir
+          </Badge>
+        )}
       </div>
     );
   }
