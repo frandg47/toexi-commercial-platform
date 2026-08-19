@@ -123,6 +123,7 @@ export default function AccountsConfig() {
         .select(
           "id, name, currency, initial_balance, notes, include_in_balance, is_reference_capital, is_caja_virtual, is_efectivo"
         )
+        .eq("active", true)
         .order("name", { ascending: true }),
       supabase
         .from("fx_rates")
