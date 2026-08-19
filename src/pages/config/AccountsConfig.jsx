@@ -74,6 +74,8 @@ export default function AccountsConfig() {
     currency: "ARS",
     include_in_balance: true,
     is_reference_capital: false,
+    is_caja_virtual: false,
+    is_efectivo: false,
   });
   const [form, setForm] = useState({
     name: "",
@@ -82,9 +84,12 @@ export default function AccountsConfig() {
     notes: "",
     include_in_balance: true,
     is_reference_capital: false,
+    is_caja_virtual: false,
+    is_efectivo: false,
   });
   const [transferOpen, setTransferOpen] = useState(false);
   const [confirmTransferOpen, setConfirmTransferOpen] = useState(false);
+  const [isCajaOpen, setIsCajaOpen] = useState(false);
   const [transferForm, setTransferForm] = useState({
     from_account_id: "",
     to_account_id: "",
@@ -93,50 +98,72 @@ export default function AccountsConfig() {
     manual_fx_rate: "",
   });
 
+  const loadAllMovements = async () => {
+    let all = [];
+    let from = 0;
+    const pageSize = 1000;
+    while (true) {
+      const { data, error } = await supabase
+        .from("account_movements")
+        .select("id, account_id, type, amount")
+        .range(from, from + pageSize - 1);
+      if (error) throw error;
+      if (!data?.length) break;
+      all = [...all, ...data];
+      from += pageSize;
+      if (data.length < pageSize) break;
+    }
+    return all;
+  };
+
   const loadAccounts = async () => {
-    const [{ data, error }, { data: rate }, { data: usdt }, movementsResponse] =
-      await Promise.all([
-        supabase
-          .from("accounts")
-          .select(
-            "id, name, currency, initial_balance, notes, include_in_balance, is_reference_capital"
-          )
-          .order("name", { ascending: true }),
-        supabase
-          .from("fx_rates")
-          .select("rate")
-          .eq("is_active", true)
-          .eq("source", "blue")
-          .maybeSingle(),
-        supabase
-          .from("fx_rates")
-          .select("rate")
-          .eq("is_active", true)
-          .eq("source", "USDT")
-          .maybeSingle(),
-        supabase
-          .from("account_movements")
-          .select("id, account_id, type, amount"),
-      ]);
+    const [{ data, error }, { data: rate }, { data: usdt }] = await Promise.all([
+      supabase
+        .from("accounts")
+        .select(
+          "id, name, currency, initial_balance, notes, include_in_balance, is_reference_capital, is_caja_virtual, is_efectivo"
+        )
+        .order("name", { ascending: true }),
+      supabase
+        .from("fx_rates")
+        .select("rate")
+        .eq("is_active", true)
+        .eq("source", "blue")
+        .maybeSingle(),
+      supabase
+        .from("fx_rates")
+        .select("rate")
+        .eq("is_active", true)
+        .eq("source", "USDT")
+        .maybeSingle(),
+    ]);
 
     if (error) {
       toast.error("No se pudieron cargar las cuentas", {
         description: error.message,
       });
-      return;
     }
 
     setAccounts(data || []);
     setFxRate(rate?.rate ? Number(rate.rate) : null);
     setUsdtRate(usdt?.rate ? Number(usdt.rate) : null);
-    if (movementsResponse?.error) {
+
+    try {
+      const allMovements = await loadAllMovements();
+      setMovements(allMovements);
+    } catch (movError) {
       toast.error("No se pudieron cargar movimientos", {
-        description: movementsResponse.error.message,
+        description: movError.message,
       });
       setMovements([]);
-    } else {
-      setMovements(movementsResponse?.data || []);
     }
+
+    const { data: openRegister } = await supabase
+      .from("cash_registers")
+      .select("id")
+      .eq("status", "open")
+      .maybeSingle();
+    setIsCajaOpen(!!openRegister);
   };
 
   useEffect(() => {
@@ -151,6 +178,8 @@ export default function AccountsConfig() {
       currency: account.currency || "ARS",
       include_in_balance: account.include_in_balance ?? true,
       is_reference_capital: account.is_reference_capital ?? false,
+      is_caja_virtual: account.is_caja_virtual ?? false,
+      is_efectivo: account.is_efectivo ?? false,
     });
   };
 
@@ -162,6 +191,8 @@ export default function AccountsConfig() {
       currency: "ARS",
       include_in_balance: true,
       is_reference_capital: false,
+      is_caja_virtual: false,
+      is_efectivo: false,
     });
   };
 
@@ -182,6 +213,8 @@ export default function AccountsConfig() {
         currency: editForm.currency,
         include_in_balance: editForm.include_in_balance,
         is_reference_capital: editForm.is_reference_capital,
+        is_caja_virtual: editForm.is_caja_virtual,
+        is_efectivo: editForm.is_efectivo,
       })
       .eq("id", editId);
 
@@ -216,6 +249,8 @@ export default function AccountsConfig() {
         notes: form.notes || null,
         include_in_balance: form.include_in_balance,
         is_reference_capital: form.is_reference_capital,
+        is_caja_virtual: form.is_caja_virtual,
+        is_efectivo: form.is_efectivo,
       },
     ]);
 
@@ -233,10 +268,17 @@ export default function AccountsConfig() {
       notes: "",
       include_in_balance: true,
       is_reference_capital: false,
+      is_caja_virtual: false,
+      is_efectivo: false,
     });
     await loadAccounts();
     setLoading(false);
   };
+
+  const transferableAccounts = useMemo(() => {
+    if (!isCajaOpen) return accounts;
+    return accounts.filter((a) => !a.is_efectivo && !a.is_caja_virtual);
+  }, [accounts, isCajaOpen]);
 
   const fromAccount = useMemo(
     () =>
@@ -275,7 +317,8 @@ export default function AccountsConfig() {
   const accountBalances = useMemo(() => {
     const totals = new Map();
     movements.forEach((movement) => {
-      const entry = totals.get(movement.account_id) || {
+      const key = Number(movement.account_id);
+      const entry = totals.get(key) || {
         income: 0,
         expense: 0,
       };
@@ -284,11 +327,12 @@ export default function AccountsConfig() {
       } else if (movement.type === "expense") {
         entry.expense += Number(movement.amount || 0);
       }
-      totals.set(movement.account_id, entry);
+      totals.set(key, entry);
     });
 
     return accounts.map((acc) => {
-      const totalsForAccount = totals.get(acc.id) || {
+      const key = Number(acc.id);
+      const totalsForAccount = totals.get(key) || {
         income: 0,
         expense: 0,
       };
@@ -302,6 +346,13 @@ export default function AccountsConfig() {
       };
     });
   }, [accounts, movements]);
+
+  const sortedAccountBalances = useMemo(() => {
+    return [...accountBalances].sort((a, b) => {
+      if (a.include_in_balance !== b.include_in_balance) return b.include_in_balance ? 1 : -1;
+      return a.name.localeCompare(b.name);
+    });
+  }, [accountBalances]);
 
   const balanceByAccountId = useMemo(() => {
     return new Map(accountBalances.map((acc) => [acc.id, acc.current_balance]));
@@ -522,6 +573,49 @@ export default function AccountsConfig() {
             />
             <span className="text-sm">Cuenta de referencia de capital</span>
           </div>
+          <div className="flex items-center gap-2">
+            <Switch
+              checked={form.is_caja_virtual || form.is_efectivo}
+              onCheckedChange={(checked) =>
+                setForm((f) => ({
+                  ...f,
+                  is_efectivo: checked ? true : false,
+                  is_caja_virtual: false,
+                }))
+              }
+            />
+            <span className="text-sm">Pertenece a la caja</span>
+          </div>
+          {(form.is_caja_virtual || form.is_efectivo) && (
+            <>
+              <div className="flex items-center gap-2">
+                <Switch
+                  checked={form.is_efectivo}
+                  onCheckedChange={(checked) =>
+                    setForm((f) => ({
+                      ...f,
+                      is_efectivo: checked,
+                      is_caja_virtual: checked ? false : f.is_caja_virtual,
+                    }))
+                  }
+                />
+                <span className="text-sm">Efectivo físico</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Switch
+                  checked={form.is_caja_virtual}
+                  onCheckedChange={(checked) =>
+                    setForm((f) => ({
+                      ...f,
+                      is_caja_virtual: checked,
+                      is_efectivo: checked ? false : f.is_efectivo,
+                    }))
+                  }
+                />
+                <span className="text-sm">Cuenta virtual</span>
+              </div>
+            </>
+          )}
         </div>
         <Textarea
           placeholder="Notas"
@@ -545,11 +639,15 @@ export default function AccountsConfig() {
           <TabsList>
             <TabsTrigger value="regular">Cuentas</TabsTrigger>
             <TabsTrigger value="investment">Inversiones</TabsTrigger>
+            <TabsTrigger value="virtual">Caja</TabsTrigger>
           </TabsList>
-          {["regular", "investment"].map((tab) => {
+          {["regular", "investment", "virtual"].map((tab) => {
             const isInvestment = tab === "investment";
-            const filtered = accountBalances.filter(
-              (acc) => acc.is_reference_capital === isInvestment
+            const isCaja = tab === "virtual";
+            const filtered = sortedAccountBalances.filter(
+              (acc) => isCaja
+                ? (acc.is_caja_virtual === true || acc.is_efectivo === true)
+                : acc.is_reference_capital === isInvestment && !acc.is_caja_virtual && !acc.is_efectivo
             );
             return (
               <TabsContent key={tab} value={tab}>
@@ -561,7 +659,6 @@ export default function AccountsConfig() {
                         <TableHead>Moneda</TableHead>
                         <TableHead>Saldo inicial</TableHead>
                         <TableHead>Saldo actual</TableHead>
-                        <TableHead>Saldo disponible</TableHead>
                         <TableHead>Incluir</TableHead>
                         <TableHead className="text-right">Acciones</TableHead>
                       </TableRow>
@@ -578,7 +675,19 @@ export default function AccountsConfig() {
                                 }
                               />
                             ) : (
-                              acc.name
+                              <div className="flex items-center gap-2">
+                                {acc.name}
+                                {acc.is_efectivo && (
+                                  <span className="text-[10px] rounded bg-amber-100 px-1.5 py-0.5 text-amber-700 font-medium">
+                                    Efectivo
+                                  </span>
+                                )}
+                                {acc.is_caja_virtual && (
+                                  <span className="text-[10px] rounded bg-blue-100 px-1.5 py-0.5 text-blue-700 font-medium">
+                                    Caja Virtual
+                                  </span>
+                                )}
+                              </div>
                             )}
                           </TableCell>
                           <TableCell>
@@ -631,20 +740,61 @@ export default function AccountsConfig() {
                                 : formatARS(acc.current_balance)}
                           </TableCell>
                           <TableCell>
-                            {acc.currency === "USD"
-                              ? formatUSD(acc.current_balance)
-                              : acc.currency === "USDT"
-                                ? formatUSDT(acc.current_balance)
-                                : formatARS(acc.current_balance)}
-                          </TableCell>
-                          <TableCell>
                             {editId === acc.id ? (
-                              <Switch
-                                checked={editForm.include_in_balance}
-                                onCheckedChange={(checked) =>
-                                  setEditForm((f) => ({ ...f, include_in_balance: checked }))
-                                }
-                              />
+                              <div className="space-y-2">
+                                <div className="flex items-center gap-2">
+                                  <Switch
+                                    checked={editForm.include_in_balance}
+                                    onCheckedChange={(checked) =>
+                                      setEditForm((f) => ({ ...f, include_in_balance: checked }))
+                                    }
+                                  />
+                                  <span className="text-xs">Incluir en balance</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <Switch
+                                    checked={editForm.is_caja_virtual || editForm.is_efectivo}
+                                    onCheckedChange={(checked) =>
+                                      setEditForm((f) => ({
+                                        ...f,
+                                        is_efectivo: checked ? true : false,
+                                        is_caja_virtual: false,
+                                      }))
+                                    }
+                                  />
+                                  <span className="text-xs">Pertenece a la caja</span>
+                                </div>
+                                {(editForm.is_caja_virtual || editForm.is_efectivo) && (
+                                  <>
+                                    <div className="flex items-center gap-2">
+                                      <Switch
+                                        checked={editForm.is_efectivo}
+                                        onCheckedChange={(checked) =>
+                                          setEditForm((f) => ({
+                                            ...f,
+                                            is_efectivo: checked,
+                                            is_caja_virtual: checked ? false : f.is_caja_virtual,
+                                          }))
+                                        }
+                                      />
+                                      <span className="text-xs">Efectivo</span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      <Switch
+                                        checked={editForm.is_caja_virtual}
+                                        onCheckedChange={(checked) =>
+                                          setEditForm((f) => ({
+                                            ...f,
+                                            is_caja_virtual: checked,
+                                            is_efectivo: checked ? false : f.is_efectivo,
+                                          }))
+                                        }
+                                      />
+                                      <span className="text-xs">Virtual</span>
+                                    </div>
+                                  </>
+                                )}
+                              </div>
                             ) : acc.include_in_balance ? (
                               "Si"
                             ) : (
@@ -681,12 +831,14 @@ export default function AccountsConfig() {
                       {filtered.length === 0 && (
                         <TableRow>
                           <TableCell
-                            colSpan={7}
+                            colSpan={6}
                             className="text-center text-muted-foreground"
                           >
-                            {isInvestment
-                              ? "No hay cuentas de inversiones."
-                              : "No hay cuentas creadas."}
+                            {isCaja
+                              ? "No hay cuentas de caja creadas."
+                              : isInvestment
+                                ? "No hay cuentas de inversiones."
+                                : "No hay cuentas creadas."}
                           </TableCell>
                         </TableRow>
                       )}
@@ -704,6 +856,11 @@ export default function AccountsConfig() {
           <DialogHeader>
             <DialogTitle>Nueva transferencia</DialogTitle>
           </DialogHeader>
+          {isCajaOpen && (
+            <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-700">
+              La caja está abierta. Las cuentas de caja no están disponibles para transferencias.
+            </div>
+          )}
           <div className="grid gap-3">
             <div className="grid gap-1">
               <span className="text-xs text-muted-foreground">Cuenta origen</span>
@@ -717,7 +874,7 @@ export default function AccountsConfig() {
                   <SelectValue placeholder="Cuenta origen" />
                 </SelectTrigger>
                 <SelectContent className="z-[9999]">
-                  {accounts.map((acc) => (
+                  {transferableAccounts.map((acc) => (
                     <SelectItem key={acc.id} value={String(acc.id)}>
                       {acc.name} ({acc.currency})
                     </SelectItem>
@@ -737,7 +894,7 @@ export default function AccountsConfig() {
                   <SelectValue placeholder="Cuenta destino" />
                 </SelectTrigger>
                 <SelectContent className="z-[9999]">
-                  {accounts.map((acc) => (
+                  {transferableAccounts.map((acc) => (
                     <SelectItem key={acc.id} value={String(acc.id)}>
                       {acc.name} ({acc.currency})
                     </SelectItem>
