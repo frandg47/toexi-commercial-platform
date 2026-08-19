@@ -12,7 +12,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
-import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -33,6 +32,8 @@ export default function SheetNewLead({ open, onOpenChange, sellerId }) {
   const [customers, setCustomers] = useState([]);
   const [products, setProducts] = useState([]);
   const [variants, setVariants] = useState([]);
+  const [inventoryUnits, setInventoryUnits] = useState([]);
+  const [reservationUnitId, setReservationUnitId] = useState("");
 
   const [searchCustomer, setSearchCustomer] = useState("");
   const [searchProduct, setSearchProduct] = useState("");
@@ -51,10 +52,9 @@ export default function SheetNewLead({ open, onOpenChange, sellerId }) {
   const [form, setForm] = useState({
     appointmentDatetime: "",
     notes: "",
-    depositPaid: false,
-    depositAmount: "",
-    depositCurrency: "ARS",
+    fulfillmentType: "stock",
   });
+  const [reservationVariantId, setReservationVariantId] = useState("");
 
   // 🔍 Buscar clientes
   useEffect(() => {
@@ -96,7 +96,7 @@ export default function SheetNewLead({ open, onOpenChange, sellerId }) {
       const q = searchVariant.trim();
       const { data, error } = await supabase
         .from("product_variants")
-        .select("id, variant_name, color, storage, ram, stock, products(name)")
+        .select("id, variant_name, color, storage, ram, stock, products(name, inventory_tracking_mode)")
         .eq("product_id", selectedProduct.id)
         .eq("active", true)
         .ilike("variant_name", `%${q}%`)
@@ -106,6 +106,25 @@ export default function SheetNewLead({ open, onOpenChange, sellerId }) {
     fetchVariants();
   }, [selectedProduct, focusVariant, searchVariant]);
 
+  useEffect(() => {
+    if (!reservationVariantId) {
+      setInventoryUnits([]);
+      setReservationUnitId("");
+      return;
+    }
+    setReservationUnitId("");
+    const loadInventoryUnits = async () => {
+      const { data } = await supabase
+        .from("inventory_units")
+        .select("id, identifier_value, identifier_normalized, status")
+        .eq("variant_id", Number(reservationVariantId))
+        .eq("status", "available")
+        .order("identifier_value");
+      setInventoryUnits(data || []);
+    };
+    loadInventoryUnits();
+  }, [reservationVariantId]);
+
   // ➕ Agregar variante
   const handleAddVariant = (variant) => {
     if (selectedVariants.some((v) => v.id === variant.id)) {
@@ -113,19 +132,18 @@ export default function SheetNewLead({ open, onOpenChange, sellerId }) {
       return;
     }
     setSelectedVariants([...selectedVariants, variant]);
+    setReservationVariantId((current) => current || String(variant.id));
+    if (Number(variant.stock || 0) <= 0) {
+      setForm((current) => ({ ...current, fulfillmentType: "a_pedido" }));
+    }
     setSearchVariant("");
   };
 
   // ❌ Quitar variante
   const handleRemoveVariant = (id) => {
     setSelectedVariants(selectedVariants.filter((v) => v.id !== id));
-  };
-
-  // 📦 Calcular estado del producto según stock
-  const getProductStatus = () => {
-    if (selectedVariants.length === 0) return null;
-    const allHaveStock = selectedVariants.every((v) => v.stock > 0);
-    return allHaveStock ? "disponible" : "en espera";
+    if (String(reservationVariantId) === String(id)) setReservationVariantId("");
+    if (String(reservationUnitId) && String(reservationVariantId) === String(id)) setReservationUnitId("");
   };
 
   // 🧾 Enviar lead
@@ -142,12 +160,6 @@ export default function SheetNewLead({ open, onOpenChange, sellerId }) {
 
     if (!form.appointmentDatetime) {
       toast.error("Debes seleccionar una fecha y hora para la cita");
-      return;
-    }
-
-    const depositAmount = Number(form.depositAmount || 0);
-    if (form.depositPaid && depositAmount <= 0) {
-      toast.error("Ingresa un monto de seña válido");
       return;
     }
 
@@ -169,11 +181,28 @@ export default function SheetNewLead({ open, onOpenChange, sellerId }) {
       storage: v.storage,
       ram: v.ram,
       stock: v.stock,
+      inventory_tracking_mode: v.products?.inventory_tracking_mode || "quantity",
     }));
 
-    const productStatus = getProductStatus();
+    const hasStock = selectedVariants.some((variant) => Number(variant.stock || 0) > 0);
+    const fulfillmentType = hasStock && form.fulfillmentType === "stock" ? "stock" : "a_pedido";
+    if (fulfillmentType === "stock" && !reservationVariantId) {
+      toast.error("Seleccioná la variante que se va a reservar");
+      setLoading(false);
+      return;
+    }
+    const reservationVariant = selectedVariants.find((variant) => String(variant.id) === String(reservationVariantId));
+    const selectedReservationUnitId = reservationVariant?.products?.inventory_tracking_mode === "serial"
+      ? reservationUnitId
+      : null;
+    if (fulfillmentType === "stock" && reservationVariant?.products?.inventory_tracking_mode === "serial" && !selectedReservationUnitId) {
+      toast.error("Seleccioná un IMEI o código único disponible para reservar");
+      setLoading(false);
+      return;
+    }
+    const productStatus = fulfillmentType === "stock" ? "reservado" : "a_pedido";
 
-    const { error } = await supabase.from("leads").insert([
+    const { data: createdLead, error } = await supabase.from("leads").insert([
       {
         referred_by: sellerId,
         customer_id: selectedCustomer?.id || null,
@@ -181,12 +210,14 @@ export default function SheetNewLead({ open, onOpenChange, sellerId }) {
         appointment_datetime: form.appointmentDatetime || null,
         notes: form.notes || null,
         status: "pendiente",
-        product_status: productStatus, // ✅ "disponible" o "en espera"
-        deposit_paid: form.depositPaid,
-        deposit_amount: form.depositPaid ? depositAmount : 0,
-        deposit_currency: form.depositPaid ? form.depositCurrency : "ARS",
+        product_status: productStatus,
+        fulfillment_type: fulfillmentType,
+        reservation_expires_at: fulfillmentType === "stock" ? selectedDate.toISOString() : null,
+        deposit_paid: false,
+        deposit_amount: 0,
+        deposit_currency: "ARS",
       },
-    ]);
+    ]).select("id").single();
 
     setLoading(false);
 
@@ -196,16 +227,32 @@ export default function SheetNewLead({ open, onOpenChange, sellerId }) {
       return;
     }
 
+    if (fulfillmentType === "stock") {
+      const { error: reservationError } = await supabase.rpc("reserve_order_stock", {
+        p_lead_id: createdLead.id,
+        p_variant_id: Number(reservationVariantId),
+        p_inventory_unit_id: selectedReservationUnitId ? Number(selectedReservationUnitId) : null,
+        p_quantity: 1,
+        p_expires_at: selectedDate.toISOString(),
+      });
+      if (reservationError) {
+        await supabase.from("leads").delete().eq("id", createdLead.id);
+        setLoading(false);
+        toast.error(reservationError.message || "No se pudo reservar el producto");
+        return;
+      }
+    }
+
     toast.success("Pedido creado correctamente");
     onOpenChange(false);
     // Reset
     setForm({
       appointmentDatetime: "",
       notes: "",
-      depositPaid: false,
-      depositAmount: "",
-      depositCurrency: "ARS",
+      fulfillmentType: "stock",
     });
+    setReservationVariantId("");
+    setReservationUnitId("");
     setSelectedCustomer(null);
     setSelectedProduct(null);
     setSelectedVariants([]);
@@ -398,49 +445,54 @@ export default function SheetNewLead({ open, onOpenChange, sellerId }) {
             )}
           </div>
 
-          {/* 💰 Seña */}
-          <div className="border rounded-md p-3 space-y-3">
-            <div className="flex items-center justify-between">
-              <Label className="text-sm">¿Dejó seña?</Label>
-              <Switch
-                checked={form.depositPaid}
-                onCheckedChange={(checked) =>
-                  setForm((f) => ({
-                    ...f,
-                    depositPaid: checked,
-                    depositAmount: checked ? f.depositAmount : "",
-                  }))
-                }
-              />
-            </div>
-
-            {form.depositPaid && (
-              <div className="grid gap-2">
-                <Select
-                  value={form.depositCurrency}
-                  onValueChange={(value) =>
-                    setForm((f) => ({ ...f, depositCurrency: value }))
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Moneda de la seña" />
-                  </SelectTrigger>
+          <div className="border rounded-md p-3 space-y-2">
+            <Label className="text-sm">Modalidad del pedido</Label>
+            <Select
+              value={form.fulfillmentType}
+              onValueChange={(value) => setForm((current) => ({ ...current, fulfillmentType: value }))}
+            >
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="stock" disabled={!selectedVariants.some((variant) => Number(variant.stock || 0) > 0)}>
+                  Reservar stock disponible
+                </SelectItem>
+                <SelectItem value="a_pedido">A pedido / sin stock</SelectItem>
+              </SelectContent>
+            </Select>
+            {form.fulfillmentType === "stock" && selectedVariants.length > 0 && (
+              <div className="grid gap-2 pt-2">
+                <Label className="text-xs">Variante a reservar</Label>
+                <Select value={reservationVariantId} onValueChange={setReservationVariantId}>
+                  <SelectTrigger><SelectValue placeholder="Seleccioná una variante" /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="ARS">ARS</SelectItem>
-                    <SelectItem value="USD">USD</SelectItem>
+                    {selectedVariants.filter((variant) => Number(variant.stock || 0) > 0).map((variant) => (
+                      <SelectItem key={variant.id} value={String(variant.id)}>
+                        {variant.variant_name || variant.products?.name || "Variante"} ({variant.stock} disponibles)
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
-                <Input
-                  type="number"
-                  step="0.01"
-                  placeholder={`Monto de la seña (${form.depositCurrency})`}
-                  value={form.depositAmount}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, depositAmount: e.target.value }))
-                  }
-                />
+                {selectedVariants.find((variant) => String(variant.id) === String(reservationVariantId))?.products?.inventory_tracking_mode === "serial" && (
+                  <div className="grid gap-2 pt-2">
+                    <Label className="text-xs">IMEI / código único</Label>
+                    <Select value={reservationUnitId} onValueChange={setReservationUnitId}>
+                      <SelectTrigger><SelectValue placeholder="Seleccioná la unidad a reservar" /></SelectTrigger>
+                      <SelectContent>
+                        {inventoryUnits.map((unit) => (
+                          <SelectItem key={unit.id} value={String(unit.id)}>
+                            {unit.identifier_value || unit.identifier_normalized}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {!inventoryUnits.length && <p className="text-xs text-destructive">No hay unidades serializadas disponibles.</p>}
+                  </div>
+                )}
               </div>
             )}
+            <p className="text-xs text-muted-foreground">
+              La seña se registra después desde Pedidos por el cajero con caja abierta.
+            </p>
           </div>
 
           {/* 📅 Fecha y notas */}

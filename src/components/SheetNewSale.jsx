@@ -8,7 +8,6 @@ import {
   SheetFooter,
 } from "@/components/ui/sheet";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -21,27 +20,20 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabaseClient";
-import DialogSaleInvoice from "./DialogSaleInvoice";
 import DialogAddCustomer from "./DialogAddCustomer";
 import { formatPersonName } from "@/utils/formatName";
 import {
-  IconX,
-  IconCash,
-  IconCreditCard,
-  IconBuildingBank,
   IconReceipt2,
   IconChevronRight,
   IconChevronLeft,
   IconTrash,
-  IconCirclePlus,
   IconUserPlus,
   IconScan,
 } from "@tabler/icons-react";
 // import { useNavigate } from "react-router-dom";
 // import { useSaleStore } from "../store/useSaleStore";
 
-export default function SheetNewSale({ open, onOpenChange, lead }) {
-  const ARS_TOLERANCE = 10;
+export default function SheetNewSale({ open, onOpenChange, lead, onSaleCreated }) {
   const SERIAL_AVAILABLE_STATUS = "available";
   // --- Wizard ---
   const [step, setStep] = useState(1);
@@ -94,22 +86,8 @@ export default function SheetNewSale({ open, onOpenChange, lead }) {
   });
 
 
-  // --- Payments (mixto) ---
-  const [payments, setPayments] = useState([
-    { method: "", amount: "", reference: "", installments: "", account_id: "" },
-  ]);
-
-  // --- Invoice dialog ---
-  const [invoiceData, setInvoiceData] = useState(null);
-  const [invoiceOpen, setInvoiceOpen] = useState(false);
-
   // --- Add Customer dialog ---
   const [dialogCustomerOpen, setDialogCustomerOpen] = useState(false);
-
-  // Métodos de pago desde la BD
-  const [paymentMethods, setPaymentMethods] = useState([]);
-  const [paymentInstallments, setPaymentInstallments] = useState([]);
-  const [accounts, setAccounts] = useState([]);
 
   // Canales de venta
   const [salesChannels, setSalesChannels] = useState([]);
@@ -207,85 +185,13 @@ const buildSelectedVariant = (variant) => ({
     return 0;
   }, [surcharge, baseTotal]);
 
-  const getPaymentDisplayCurrency = (methodName) => {
-    const upper = methodName?.toUpperCase();
-    if (upper === "USDT") return "USDT";
-    if (upper === "USD") return "USD";
-    return "ARS";
-  };
-
-  const isUSDMethod = (methodName) =>
-    ["USD", "USDT"].includes(methodName?.toUpperCase());
-
-  const getPaymentFxRate = (methodName) => {
-    const upper = methodName?.toUpperCase();
-    if (upper === "USDT") return usdtRate;
-    if (upper === "USD") return exchangeRate;
-    return 1;
-  };
-  // pagos sin interés (efectivo/transfer/macro)
-  const paidNoInterest = useMemo(() => {
-    return payments
-      .filter((p) => {
-        const info = paymentInstallments.find(
-          (i) =>
-            i.payment_method_id === Number(p.payment_method_id) &&
-            i.installments === Number(p.installments)
-        );
-        const multiplier = info?.multiplier || p.multiplier || 1;
-        return Number(multiplier) === 1;
-      })
-      .reduce((acc, p) => {
-        const amount = Number(p.amount || 0);
-        if (isUSDMethod(p.method_name)) {
-          const rate = getPaymentFxRate(p.method_name);
-          if (rate) {
-            return acc + amount * rate;
-          }
-        }
-        return acc + amount;
-      }, 0);
-  }, [payments, paymentInstallments, exchangeRate, usdtRate]);
-
   const totalAfterAdjustments = useMemo(() => {
     return Math.max(baseTotal - discountAmount + surchargeAmount, 0);
   }, [baseTotal, discountAmount, surchargeAmount]);
 
-  // buscar método con interés (si existe)
-  const interestMethod = useMemo(() => {
-    return payments.find((p) => {
-      const info = paymentInstallments.find(
-        (i) =>
-          i.payment_method_id === Number(p.payment_method_id) &&
-          i.installments === Number(p.installments)
-      );
-      const multiplier = info?.multiplier || p.multiplier || 1;
-      return Number(multiplier) > 1;
-    });
-  }, [payments, paymentInstallments]);
-
-  // multiplicador de interés
-  const multiplier = interestMethod
-    ? paymentInstallments.find(
-      (i) =>
-        i.payment_method_id === Number(interestMethod.payment_method_id) &&
-        i.installments === Number(interestMethod.installments)
-    )?.multiplier || 1
-    : 1;
-
-
-  // saldo después de pagos sin interés
-  const saldo = useMemo(() => {
-    return Math.max(totalAfterAdjustments - paidNoInterest, 0);
-  }, [totalAfterAdjustments, paidNoInterest]);
-
-  // total final con recargo
   const totalWithSurcharge = useMemo(() => {
-    if (!interestMethod) return totalAfterAdjustments;
-
-    const interestPart = saldo * (multiplier - 1);
-    return totalAfterAdjustments + interestPart;
-  }, [totalAfterAdjustments, saldo, multiplier, interestMethod]);
+    return totalAfterAdjustments;
+  }, [totalAfterAdjustments]);
 
   const depositData = useMemo(() => {
     if (!lead?.deposit_paid) {
@@ -312,52 +218,6 @@ const buildSelectedVariant = (variant) => ({
     return totalDue / exchangeRate;
   }, [totalDue, exchangeRate]);
 
-  const hasMissingAccount = useMemo(
-    () =>
-      payments.some(
-        (p) => p.payment_method_id && (!p.account_id || p.account_id === "")
-      ),
-    [payments]
-  );
-
-  const getAccountsForPayment = (payment) => {
-    if (!payment?.method_name) return accounts;
-    const currency = getPaymentDisplayCurrency(payment.method_name);
-    return accounts.filter((acc) => acc.currency === currency);
-  };
-
-  // cuánto lleva pagado el cliente (en ARS, convertiendo USD si aplica)
-  const paidARS = useMemo(() => {
-    return payments.reduce((acc, p) => {
-      const amount = Number(p.amount || 0);
-      if (isUSDMethod(p.method_name)) {
-        const rate = getPaymentFxRate(p.method_name);
-        if (rate) {
-          return acc + (amount * rate);
-        }
-      }
-      return acc + amount;
-    }, 0);
-  }, [payments, exchangeRate, usdtRate]);
-
-  // saldo restante
-  const remaining = useMemo(() => {
-    return Math.max(totalDue - paidARS, 0);
-  }, [totalDue, paidARS]);
-
-// Total USD original (excluye gratuitos)
-  const subtotalUSD = useMemo(() => {
-    return selectedVariants.reduce(
-      (acc, v) => acc + (v.isFree ? 0 : getPriceUSD(v) * getVariantQuantity(v)),
-      0
-    );
-  }, [selectedVariants, priceType]);
-
-
-  const subtotalWithSurcharge = useMemo(() => {
-    return totalWithSurcharge + discountAmount - surchargeAmount;
-  }, [totalWithSurcharge, discountAmount, surchargeAmount]);
-
   const filteredSellers = useMemo(() => {
     const q = searchSeller.trim().toLowerCase();
     if (!q) return sellers.slice(0, 30);
@@ -369,13 +229,6 @@ const buildSelectedVariant = (variant) => ({
       )
       .slice(0, 30);
   }, [sellers, searchSeller]);
-
-  const methodIcon = (m) => {
-    if (m === "efectivo") return <IconCash className="h-4 w-4" />;
-    if (m === "transferencia") return <IconBuildingBank className="h-4 w-4" />;
-    if (m === "tarjeta") return <IconCreditCard className="h-4 w-4" />;
-    return <IconCreditCard className="h-4 w-4" />;
-  };
 
   // ========== EFFECTS ==========
 
@@ -417,41 +270,6 @@ const buildSelectedVariant = (variant) => ({
     };
 
     fetchSellers();
-  }, []);
-
-  // Obtener métodos de pago y cuotas
-  useEffect(() => {
-    const fetchPayments = async () => {
-      const { data: methods } = await supabase
-        .from("payment_methods")
-        .select("id, name, multiplier")
-        .eq("is_active", true);
-
-      const { data: installments } = await supabase
-        .from("payment_installments")
-        .select("id, payment_method_id, installments, multiplier");
-
-      setPaymentMethods(methods || []);
-      setPaymentInstallments(installments || []);
-    };
-
-    fetchPayments();
-  }, []);
-
-  // Obtener cuentas
-  useEffect(() => {
-    const fetchAccounts = async () => {
-      const { data, error } = await supabase
-        .from("accounts")
-        .select("id, name, currency, is_reference_capital")
-        .eq("is_reference_capital", false)
-        .order("name", { ascending: true });
-
-      if (error) console.error("Error obteniendo cuentas:", error);
-      setAccounts(data || []);
-    };
-
-    fetchAccounts();
   }, []);
 
   // Obtener canales de venta
@@ -538,14 +356,6 @@ const buildSelectedVariant = (variant) => ({
     const local = salesChannels.find(ch => ch.name === "Local");
     if (local) setSelectedChannel(String(local.id));
 
-    // Pagos
-    setPayments([
-      { method: "", amount: "", reference: "", installments: "", account_id: "" }
-    ]);
-
-    // Datos del preview
-    setInvoiceData(null);
-
     // Lead (no tocar)
   };
 
@@ -567,7 +377,26 @@ const buildSelectedVariant = (variant) => ({
         .in("id", ids);
 
       if (!error && data) {
-        setSelectedVariants(data.map((v) => buildSelectedVariant(v)));
+        const reservedUnit = lead.reserved_inventory_unit_id
+          ? (await supabase
+              .from("inventory_units")
+              .select("id, identifier_value")
+              .eq("id", lead.reserved_inventory_unit_id)
+              .maybeSingle()).data
+          : null;
+        setSelectedVariants(
+          data.map((variant) => {
+            const selected = buildSelectedVariant(variant);
+            if (String(variant.id) === String(lead.reserved_variant_id) && reservedUnit) {
+              return {
+                ...selected,
+                inventory_unit_ids: [reservedUnit.id],
+                imeis: [reservedUnit.identifier_value],
+              };
+            }
+            return selected;
+          })
+        );
       }
     };
     enrichVariants();
@@ -645,13 +474,6 @@ const buildSelectedVariant = (variant) => ({
     const timer = setTimeout(() => barcodeInputRef.current?.focus(), 120);
     return () => clearTimeout(timer);
   }, [open, step]);
-
-  const getInstallmentsForMethod = (methodId) => {
-    if (!methodId) return [];
-    return paymentInstallments.filter(
-      (inst) => inst.payment_method_id === Number(methodId)
-    );
-  };
 
   // ========== CART HANDLERS ==========
   const handleAddVariant = (variant) => {
@@ -838,62 +660,11 @@ const buildSelectedVariant = (variant) => ({
     );
   };
 
-
-
-
-  // ========== PAYMENTS HANDLERS ==========
-  const addPaymentRow = () =>
-    setPayments((p) => [
-      ...p,
-      { method: "", amount: "", reference: "", installments: "", account_id: "" },
-    ]);
-  const removePaymentRow = (idx) =>
-    setPayments((p) => p.filter((_, i) => i !== idx));
-  const updatePaymentField = (idx, field, value) =>
-    setPayments((p) =>
-      p.map((row, i) => (i === idx ? { ...row, [field]: value } : row))
-    );
-
   // ========== SAVE ==========
   const handleSubmit = async () => {
     if (!selectedCustomer) return toast.error("Selecciona un cliente");
     if (!selectedVariants.length) return toast.error("Agrega productos");
     if (!exchangeRate) return toast.error("Error con la cotización");
-
-    const normalized = payments
-      .map((p) => ({
-        payment_method_id: p.payment_method_id,
-        method_name: p.method_name,
-        installments: p.installments || null,
-        multiplier: p.multiplier || 1,
-        amount: Number(p.amount || 0),
-        account_id: p.account_id ? Number(p.account_id) : null,
-      }))
-      .filter((p) => p.payment_method_id && p.amount > 0);
-
-    if (totalDue > 0 && !normalized.length) {
-      return toast.error("Agrega al menos un método de pago");
-    }
-
-    if (normalized.some((p) => !p.account_id)) {
-      return toast.error("Selecciona una cuenta para cada pago");
-    }
-
-    const remainingDiff = Math.abs(paidARS - totalDue);
-    if (Math.round(remainingDiff) > ARS_TOLERANCE) {
-      return toast.error(
-        "El total pagado no coincide con el total de la venta"
-      );
-    }
-
-    const usesUsd = normalized.some((p) => p.method_name?.toUpperCase() === "USD");
-    const usesUsdt = normalized.some((p) => p.method_name?.toUpperCase() === "USDT");
-    if (usesUsd && !exchangeRate) {
-      return toast.error("No hay cotizacion activa para USD");
-    }
-    if (usesUsdt && !usdtRate) {
-      return toast.error("No hay cotizacion activa para USDT");
-    }
 
     const emptySerialVariant = selectedVariants.find(
       (variant) => isSerialTrackedVariant(variant) && getVariantQuantity(variant) === 0
@@ -928,7 +699,6 @@ const buildSelectedVariant = (variant) => ({
       return toast.error(`Sin stock para ${insufficient.products.name}`);
     }
 
-// ✅ Armamos los datos que irá al modal
     const items = selectedVariants.map((v) => {
       const quantity = getVariantQuantity(v);
       const unitPrice = v.isFree ? 0 : getPriceUSD(v);
@@ -943,18 +713,15 @@ const buildSelectedVariant = (variant) => ({
         usd_price: getPriceUSD(v),
         is_free: v.isFree,
         inventory_tracking_mode: v.products?.inventory_tracking_mode || "quantity",
-
         quantity,
         imeis: v.imeis || [],
         inventory_unit_ids: v.inventory_unit_ids || [],
-
         subtotal_usd: unitPrice * quantity,
         subtotal_ars: unitPrice * quantity * exchangeRate,
       };
     });
 
-
-      const sellerData = lead?.seller
+    const sellerData = lead?.seller
       ? lead?.seller?.user?.is_active
         ? {
             id_auth: lead.seller.id_auth,
@@ -971,11 +738,12 @@ const buildSelectedVariant = (variant) => ({
       return toast.error("No se puede asignar una venta a un vendedor inactivo");
     }
 
-
     const salePreview = {
       customer_id: selectedCustomer.id,
       seller_id: sellerData?.id_auth ?? null,
       lead_id: lead?.id ?? null,
+      reserved_variant_id: lead?.reserved_variant_id ?? null,
+      reservation_expires_at: lead?.reservation_expires_at ?? null,
       sales_channel_id: selectedChannel ? Number(selectedChannel) : null,
       sales_channel_name: salesChannels.find(ch => String(ch.id) === selectedChannel)?.name,
       total_usd: totalUsdDue,
@@ -983,13 +751,12 @@ const buildSelectedVariant = (variant) => ({
       fx_rate_used: exchangeRate,
       fx_rate_usdt: usdtRate,
       notes: form.notes || null,
-      payments: normalized,
+      payments: [],
       variants: items,
-      customer_name: `${selectedCustomer.name} ${selectedCustomer.last_name ?? ""
-        }`,
+      status: "pending",
+      customer_name: `${selectedCustomer.name} ${selectedCustomer.last_name ?? ""}`,
       customer_phone: selectedCustomer.phone ?? "",
-      seller_name: `${sellerData?.name ?? ""} ${sellerData?.last_name ?? ""
-        }`,
+      seller_name: `${sellerData?.name ?? ""} ${sellerData?.last_name ?? ""}`,
       seller_email: sellerData?.email ?? "",
       seller_phone: sellerData?.phone ?? "",
       discount_type: discount.type,
@@ -1007,9 +774,83 @@ const buildSelectedVariant = (variant) => ({
       total_final_ars: totalDue,
     };
 
-    setInvoiceData(salePreview);
-    setInvoiceOpen(true);
-    onOpenChange(false);
+    setLoading(true);
+    let reservationReleased = false;
+    try {
+      const payload = {
+        p_customer_id: salePreview.customer_id,
+        p_seller_id: salePreview.seller_id,
+        p_lead_id: salePreview.lead_id,
+        p_sales_channel_id: salePreview.sales_channel_id,
+        p_fx_rate: salePreview.fx_rate_used,
+        p_notes: salePreview.notes,
+        p_status: "pending",
+        p_discount_type: salePreview.discount_type,
+        p_discount_value: salePreview.discount_value,
+        p_discount_amount: salePreview.discount_amount,
+        p_items: salePreview.variants.map(v => ({
+          variant_id: v.variant_id ?? v.id,
+          quantity: getVariantQuantity(v),
+          imeis: v.imeis,
+          inventory_unit_ids: v.inventory_unit_ids || [],
+          usd_price: v.usd_price,
+          is_gift: v.is_free ?? false,
+        })),
+        p_payments: [],
+        p_total_ars: salePreview.total_final_ars,
+        p_total_usd: salePreview.total_usd,
+      };
+
+      if (salePreview.lead_id && salePreview.reserved_variant_id) {
+        const { error: releaseError } = await supabase.rpc("release_order_reservation", {
+          p_lead_id: salePreview.lead_id,
+          p_reason: "Preparada para venta",
+        });
+        if (releaseError) throw releaseError;
+        reservationReleased = true;
+      }
+
+      const { data, error } = await supabase.rpc("create_sale_with_imeis", payload);
+      if (error) throw error;
+
+      if (salePreview.lead_id && data?.sale_id) {
+        await Promise.all([
+          supabase.rpc("convert_order_reservation", {
+            p_lead_id: salePreview.lead_id,
+            p_sale_id: data.sale_id,
+          }),
+          supabase.rpc("apply_order_deposits_to_sale", {
+            p_lead_id: salePreview.lead_id,
+            p_sale_id: data.sale_id,
+          }),
+        ]);
+      }
+
+      toast.success("Venta pendiente registrada. El cobro se realiza en Caja.");
+      onSaleCreated?.();
+      window.dispatchEvent(new Event("sale-created"));
+      resetFormData();
+      onOpenChange(false);
+    } catch (err) {
+      if (reservationReleased && salePreview.lead_id && salePreview.reserved_variant_id) {
+        const reservedVariant = salePreview.variants.find(
+          (variant) => String(variant.variant_id ?? variant.id) === String(salePreview.reserved_variant_id)
+        );
+        await supabase.rpc("reserve_order_stock", {
+          p_lead_id: salePreview.lead_id,
+          p_variant_id: Number(salePreview.reserved_variant_id),
+          p_inventory_unit_id: reservedVariant?.inventory_unit_ids?.[0] || null,
+          p_quantity: 1,
+          p_expires_at: salePreview.reservation_expires_at || null,
+        });
+      }
+      console.error("Error al crear venta pendiente:", err);
+      toast.error("Error al crear la venta", {
+        description: err.message || "Ocurrió un error inesperado",
+      });
+    } finally {
+      setLoading(false);
+    }
   };
 
   // ========== RENDER ==========
@@ -1021,7 +862,7 @@ const buildSelectedVariant = (variant) => ({
             <div>
               <SheetTitle>Nueva venta</SheetTitle>
               <SheetDescription>
-                Completá los 3 pasos para registrar la venta.
+                Completá los 2 pasos para registrar la venta pendiente.
               </SheetDescription>
             </div>
             <IconReceipt2 className="absolute right-12 top-6 h-6 w-6 text-primary" />
@@ -1036,10 +877,6 @@ const buildSelectedVariant = (variant) => ({
               <IconChevronRight className="h-4 w-4" />
               <span className={step >= 2 ? "font-semibold text-primary" : ""}>
                 2. Productos
-              </span>
-              <IconChevronRight className="h-4 w-4" />
-              <span className={step === 3 ? "font-semibold text-primary" : ""}>
-                3. Pago
               </span>
             </div>
             {/* <div className="flex gap-2">
@@ -1232,7 +1069,7 @@ const buildSelectedVariant = (variant) => ({
 
               {/* Codigo de barras */}
               <div className="space-y-1">
-                <div className="relative">
+                {/* <div className="relative">
                   <IconScan className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
                     ref={barcodeInputRef}
@@ -1248,7 +1085,7 @@ const buildSelectedVariant = (variant) => ({
                     }}
                     disabled={barcodeLoading}
                   />
-                </div>
+                </div> */}
                 {barcodeLoading && (
                   <p className="text-xs text-muted-foreground">
                     Buscando codigo de barras...
@@ -1545,10 +1382,10 @@ const buildSelectedVariant = (variant) => ({
                           toast.error("Todas las cantidades deben ser mayores a cero");
                           return;
                         }
-                        setStep(3);
+                        handleSubmit();
                       }}
                     >
-                      Siguiente
+                      {loading ? "Guardando..." : "Registrar venta"}
                       <IconChevronRight className="h-4 w-4" />
                     </Button>
                   </div>
@@ -1558,477 +1395,11 @@ const buildSelectedVariant = (variant) => ({
             </div>
           )}
 
-          {/* ========== PASO 3: PAGO ========== */}
-          {step === 3 && (
-            <div className="space-y-4">
-              <div className="border p-3 rounded-md bg-muted/20 space-y-2">
-                <label className="text-sm font-medium">Tipo de precio</label>
 
-                <Select
-                  value={priceType}
-                  onValueChange={(v) => setPriceType(v)}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Seleccionar tipo de precio" />
-                  </SelectTrigger>
-
-                  <SelectContent>
-                    <SelectItem value="normal">Precio Normal</SelectItem>
-                    <SelectItem value="mayorista">Precio Mayorista</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="border p-3 rounded-md bg-muted/20 space-y-2">
-                <label className="text-sm font-medium">Descuento</label>
-
-                <div className="flex gap-2">
-                  <Select
-                    value={discount.type}
-                    onValueChange={(v) =>
-                      setDiscount((d) => ({ ...d, type: v, value: 0 }))
-                    }
-                  >
-                    <SelectTrigger className="w-40">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent className="z-[9999]">
-                      <SelectItem value="none">Sin descuento</SelectItem>
-                      <SelectItem value="percent">Porcentaje (%)</SelectItem>
-                      <SelectItem value="fixed">Monto fijo ($)</SelectItem>
-                    </SelectContent>
-                  </Select>
-
-                  {discount.type !== "none" && (
-                    <Input
-                      type="number"
-                      placeholder={discount.type === "percent" ? "% descuento" : "$ descuento"}
-                      value={discount.value}
-                      onChange={(e) =>
-                        setDiscount((d) => ({ ...d, value: Number(e.target.value) }))
-                      }
-                      className="flex-1"
-                    />
-                  )}
-                </div>
-              </div>
-
-              <div className="border p-3 rounded-md bg-muted/20 space-y-2">
-                <label className="text-sm font-medium">Recargo</label>
-
-                <div className="flex gap-2">
-                  <Select
-                    value={surcharge.type}
-                    onValueChange={(v) =>
-                      setSurcharge((s) => ({ ...s, type: v, value: 0 }))
-                    }
-                  >
-                    <SelectTrigger className="w-40">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent className="z-[9999]">
-                      <SelectItem value="none">Sin recargo</SelectItem>
-                      <SelectItem value="percent">Porcentaje (%)</SelectItem>
-                      <SelectItem value="fixed">Monto fijo ($)</SelectItem>
-                    </SelectContent>
-                  </Select>
-
-                  {surcharge.type !== "none" && (
-                    <Input
-                      type="number"
-                      placeholder={
-                        surcharge.type === "percent"
-                          ? "% recargo"
-                          : "$ recargo"
-                      }
-                      value={surcharge.value}
-                      onChange={(e) =>
-                        setSurcharge((s) => ({
-                          ...s,
-                          value: Number(e.target.value),
-                        }))
-                      }
-                      className="flex-1"
-                    />
-                  )}
-                </div>
-              </div>
-
-
-              <h3 className="font-medium">Métodos de Pago</h3>
-
-              {payments.map((p, i) => {
-                const accountsForPayment = getAccountsForPayment(p);
-                return (
-                <div
-                  key={i}
-                  className="border p-3 rounded-md space-y-3 bg-muted/40"
-                >
-                  {/* Selects arriba */}
-                  <div className="flex items-center gap-2">
-                    {methodIcon(p.method)}
-
-                    <Select
-                      value={
-                        p.payment_method_id ? String(p.payment_method_id) : ""
-                      }
-                      onValueChange={(val) => {
-                        const chosen = paymentMethods.find((m) => String(m.id) === val);
-
-                        updatePaymentField(i, "payment_method_id", val);
-                        updatePaymentField(i, "method_name", chosen?.name);
-                        updatePaymentField(i, "method", chosen?.name.toLowerCase());
-                        updatePaymentField(i, "installments", "");
-                        updatePaymentField(i, "multiplier", chosen?.multiplier || 1);
-                        updatePaymentField(i, "amount", "");
-                        const accountsForMethod = getAccountsForPayment({
-                          method_name: chosen?.name,
-                        });
-                        if (accountsForMethod.length === 1) {
-                          updatePaymentField(
-                            i,
-                            "account_id",
-                            String(accountsForMethod[0].id)
-                          );
-                        } else {
-                          updatePaymentField(i, "account_id", "");
-                        }
-                      }}
-
-                    >
-                      <SelectTrigger className="flex-1">
-                        <SelectValue placeholder="Método de pago..." />
-                      </SelectTrigger>
-                      <SelectContent className="z-[9999]">
-                        {paymentMethods.map((m) => (
-                          <SelectItem key={m.id} value={String(m.id)}>
-                            {m.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-
-                    {getInstallmentsForMethod(p.payment_method_id).length >
-                      0 && (
-                        <Select
-                          value={p.installments || ""}
-                          onValueChange={(val) => {
-                            const inst = getInstallmentsForMethod(
-                              p.payment_method_id
-                            ).find((x) => x.installments === Number(val));
-                            updatePaymentField(i, "installments", val);
-                            updatePaymentField(
-                              i,
-                              "multiplier",
-                              inst?.multiplier || 1
-                            );
-                            updatePaymentField(i, "amount", "");
-                          }}
-                        >
-                          <SelectTrigger className="w-28">
-                            <SelectValue placeholder="Cuotas" />
-                          </SelectTrigger>
-                          <SelectContent className="z-[9999]">
-                            {getInstallmentsForMethod(p.payment_method_id).map(
-                              (inst) => (
-                                <SelectItem
-                                  key={inst.id}
-                                  value={inst.installments.toString()}
-                                >
-                                  {inst.installments} cuotas
-                                </SelectItem>
-                              )
-                            )}
-                          </SelectContent>
-                        </Select>
-                      )}
-
-                    {payments.length > 1 && (
-                      <Button
-                        variant="destructive"
-                        size="icon"
-                        onClick={() => removePaymentRow(i)}
-                        title="Eliminar"
-                      >
-                        <IconTrash className="h-4 w-4" />
-                      </Button>
-                    )}
-                  </div>
-
-                  {/* Inputs debajo */}
-                  <div className="grid gap-2">
-                    <div className="grid gap-2">
-                      <Select
-                        value={p.account_id ? String(p.account_id) : ""}
-                        onValueChange={(val) =>
-                          updatePaymentField(i, "account_id", val)
-                        }
-                      >
-                        <SelectTrigger className="w-full">
-                          <SelectValue placeholder="Cuenta..." />
-                        </SelectTrigger>
-                        <SelectContent className="z-[9999]">
-                          {accountsForPayment.map((acc) => (
-                            <SelectItem key={acc.id} value={String(acc.id)}>
-                              {acc.name} ({acc.currency})
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      {accountsForPayment.length === 0 && (
-                        <div className="text-xs text-muted-foreground">
-                          No hay cuentas disponibles para esta moneda
-                        </div>
-                      )}
-                      {p.payment_method_id && !p.account_id && (
-                        <div className="text-xs text-destructive">
-                          Selecciona una cuenta para este pago.
-                        </div>
-                      )}
-                    </div>
-                    <div className="flex gap-2 items-end">
-                      <Input
-                        className="flex-1"
-                        placeholder={`Monto (${getPaymentDisplayCurrency(p.method_name)})`}
-                        type="number"
-                        value={p.amount}
-                        onChange={(e) =>
-                          updatePaymentField(i, "amount", e.target.value)
-                        }
-                      />
-                      {i === payments.length - 1 && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          disabled={
-                            !p.payment_method_id ||
-                            (getInstallmentsForMethod(p.payment_method_id)
-                              .length > 0 &&
-                              !p.installments)
-                          }
-                          onClick={() => {
-                            if (
-                              !p.payment_method_id ||
-                              (getInstallmentsForMethod(p.payment_method_id)
-                                .length > 0 &&
-                                !p.installments)
-                            ) {
-                              return;
-                            }
-                            if (isUSDMethod(p.method_name)) {
-                              const rate = getPaymentFxRate(p.method_name);
-                              if (!rate) {
-                                const label = getPaymentDisplayCurrency(p.method_name);
-                                toast.error(`No hay cotizacion activa para ${label}`);
-                                return;
-                              }
-                              // Si es USD/USDT, convertir el remaining (ARS) a esa moneda
-                              const remainingUSD = remaining / rate;
-                              updatePaymentField(i, "amount", String(remainingUSD.toFixed(2)));
-                              return;
-                            }
-                            updatePaymentField(i, "amount", String(remaining));
-                          }}
-                        >
-                          Restante
-                        </Button>
-                      )}
-                    </div>
-
-                    {p.method === "transferencia" && (
-                      <Input
-                        placeholder="Referencia de transferencia"
-                        value={p.reference || ""}
-                        onChange={(e) =>
-                          updatePaymentField(i, "reference", e.target.value)
-                        }
-                      />
-                    )}
-                  </div>
-                </div>
-                );
-              })}
-
-              <Button
-                variant="outline"
-                onClick={addPaymentRow}
-                className="w-full"
-              >
-                <IconCirclePlus className="h-4 w-4 mr-1" />
-                Agregar otro pago
-              </Button>
-
-              {/* Totales */}
-              <div className="grid grid-cols-2 gap-2 text-sm border-t pt-3">
-                <div className="text-muted-foreground">Subtotal USD:</div>
-                <div className="text-right font-semibold">
-                  {subtotalUSD.toFixed(2)} USD
-                </div>
-
-                <div className="text-muted-foreground">Cotización:</div>
-                <div className="text-right">${exchangeRate}</div>
-
-                <div className="text-muted-foreground">Total base ARS:</div>
-                <div className="text-right font-semibold">
-                  {formatARS(baseTotal)}
-                </div>
-
-                {payments.map((p, i) => {
-                  if (!p.payment_method_id) return null;
-                  const amount = Number(p.amount || 0);
-                  const displayCurrency = getPaymentDisplayCurrency(p.method_name);
-                  const isUsdLike = displayCurrency !== "ARS";
-                  const isUSD = false;
-                  const displayAmount = isUsdLike
-                    ? `${displayCurrency} ${amount.toFixed(2)}`
-                    : formatARS(amount);
-                  const rate = isUsdLike ? getPaymentFxRate(p.method_name) : 1;
-                  const arsEquivalent = isUsdLike && rate ? amount * rate : amount;
-                  
-                  return (
-                    <div key={i} className="col-span-2 flex justify-between">
-                      <div className="text-muted-foreground">
-                        {p.method_name || "Método"}:
-                      </div>
-                      <div className="text-right">
-                        <div>{displayAmount}</div>
-                        {isUsdLike && rate && (
-                          <div className="text-xs text-muted-foreground">
-                            {formatARS(arsEquivalent)}
-                          </div>
-                        )}
-                        {isUSD && <div className="text-xs text-muted-foreground">≈ {formatARS(arsEquivalent)}</div>}
-                      </div>
-                    </div>
-                  );
-                })}
-
-                {/* Subtotal real con recargos */}
-                <div className="text-muted-foreground">
-                  Subtotal con recargos:
-                </div>
-                <div className="text-right font-semibold">
-                  {formatARS(subtotalWithSurcharge)}
-                </div>
-
-                {/* Descuento */}
-                {discount.type !== "none" && discountAmount > 0 && (
-                  <>
-                    <div className="text-muted-foreground">Descuento aplicado:</div>
-                    <div className="text-right text-green-600 font-semibold">
-                      − {formatARS(discountAmount)}
-                    </div>
-                  </>
-                )}
-
-                {surcharge.type !== "none" && surchargeAmount > 0 && (
-                  <>
-                    <div className="text-muted-foreground">Recargo aplicado:</div>
-                    <div className="text-right text-orange-600 font-semibold">
-                      {formatARS(surchargeAmount)}
-                    </div>
-                  </>
-                )}
-
-                {depositData.amountARS > 0 && (
-                  <>
-                    <div className="text-muted-foreground">Seña aplicada:</div>
-                    <div className="text-right text-amber-600 font-semibold">
-                      <div>{formatARS(depositData.amountARS)}</div>
-                      {depositData.currency === "USD" && depositData.amount > 0 && (
-                        <div className="text-xs text-muted-foreground">
-                          USD {depositData.amount.toFixed(2)}
-                        </div>
-                      )}
-                    </div>
-                  </>
-                )}
-
-                {/* Total final */}
-                <div className="text-muted-foreground font-medium border-t mt-2 pt-2">
-                  Total a pagar ahora:
-                </div>
-                <div className="text-right font-bold text-primary border-t mt-2 pt-2">
-                  {formatARS(totalDue)}
-                </div>
-
-
-                <div className="text-muted-foreground">Pagado:</div>
-                <div
-                  className={`text-right font-semibold ${Math.round(paidARS) === Math.round(totalDue)
-                    ? "text-green-600"
-                    : "text-red-600"
-                    }`}
-                >
-                  <div>{formatARS(paidARS)}</div>
-                  {payments.some(p => isUSDMethod(p.method_name)) && (
-                    <div className="text-xs text-muted-foreground">
-                      {payments.filter(p => isUSDMethod(p.method_name)).map((p, i) => {
-                        const displayCurrency = getPaymentDisplayCurrency(p.method_name);
-                        const amount = Number(p.amount || 0);
-                        const displayAmount = `${displayCurrency} ${amount.toFixed(2)}`;
-                        return (
-                          <div key={i}>
-                            {displayAmount} ({p.method_name})
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-
-                <div className="text-muted-foreground">Restante:</div>
-                <div
-                  className={`text-right font-bold ${remaining === 0 ? "text-green-600" : "text-blue-600"
-                    }`}
-                >
-                  {formatARS(remaining)}
-                </div>
-              </div>
-
-              <Textarea
-                placeholder="Notas de la operación (opcional)"
-                value={form.notes}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, notes: e.target.value }))
-                }
-              />
-
-              {/* ✅ Botón Volver + Finalizar */}
-              <div className="flex justify-end gap-2 mt-4">
-                <Button
-                  variant="outline"
-                  className=""
-                  onClick={() => setStep(2)}
-                >
-                  <IconChevronLeft className="h-4 w-4 mr-1" />
-                  Volver
-                </Button>
-
-                <Button
-                  className=""
-                  disabled={loading || hasMissingAccount}
-                  onClick={handleSubmit}
-                >
-                  {loading ? "Guardando..." : "Finalizar"}
-                </Button>
-              </div>
-            </div>
-          )}
         </div>
 
         <SheetFooter />
       </SheetContent>
-
-      {/* Comprobante / Factura */}
-      {invoiceData && (
-        <DialogSaleInvoice
-          open={invoiceOpen}
-          onClose={() => setInvoiceOpen(false)}
-          sale={{ ...invoiceData, reset: resetFormData }}
-          subtotalWithSurcharge={subtotalWithSurcharge}
-        />
-      )}
 
       {/* 💬 Modal para crear cliente */}
       <DialogAddCustomer

@@ -57,6 +57,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useAuth } from "../context/AuthContextProvider";
+import { useCashRegister } from "@/hooks/useCashRegister";
+import DialogCollectOrderDeposit from "./DialogCollectOrderDeposit";
 
 const STATUS_STYLES = {
   pendiente: "text-yellow-700",
@@ -75,6 +77,8 @@ const STATUS_COLORS = {
 const PRODUCT_STATUS_COLORS = {
   disponible: "bg-blue-100 text-blue-800 border-blue-300",
   "en espera": "bg-orange-100 text-orange-800 border-orange-300",
+  reservado: "bg-emerald-100 text-emerald-800 border-emerald-300",
+  a_pedido: "bg-purple-100 text-purple-800 border-purple-300",
 };
 
 const OrdersTable = () => {
@@ -100,6 +104,7 @@ const OrdersTable = () => {
     else setRefreshing(true);
 
     try {
+      await supabase.rpc("release_expired_order_reservations");
       const query = supabase
         .from("leads")
         .select(
@@ -111,8 +116,12 @@ const OrdersTable = () => {
                   appointment_datetime,
                   deposit_paid,
                   deposit_amount,
-                  deposit_currency,
-                  notes,
+                   deposit_currency,
+                   fulfillment_type,
+                   reserved_variant_id,
+                   reserved_inventory_unit_id,
+                   reservation_expires_at,
+                   notes,
                   interested_variants,
                   customers (id, name, last_name, phone),
                   seller:user_roles!leads_referred_by_fkey (id_auth, role)
@@ -177,6 +186,12 @@ const OrdersTable = () => {
     if (error) {
       toast.error("Error actualizando estado");
     } else {
+      if (["cancelado", "sin_exito"].includes(status)) {
+        await supabase.rpc("release_order_reservation", {
+          p_lead_id: id,
+          p_reason: status === "cancelado" ? "Pedido cancelado" : "Pedido sin exito",
+        });
+      }
       toast.success("Estado actualizado");
       fetchOrders(false);
     }
@@ -219,6 +234,14 @@ const OrdersTable = () => {
       .in("id", ids);
 
     if (!error) {
+      await Promise.all(
+        ids.map((id) =>
+          supabase.rpc("release_order_reservation", {
+            p_lead_id: id,
+            p_reason: "Cita vencida",
+          })
+        )
+      );
       toast("Citas vencidas canceladas", {
         description: `${ids.length} pedido(s) actualizados`,
       });
@@ -239,6 +262,8 @@ const OrdersTable = () => {
   const closeReschedule = () => setRescheduleLead(null);
   const [saleLead, setSaleLead] = useState(null);
   const [saleOpen, setSaleOpen] = useState(false);
+  const [depositLead, setDepositLead] = useState(null);
+  const [depositOpen, setDepositOpen] = useState(false);
 
   const handleCreateSale = (lead) => {
     setSaleLead(lead);
@@ -270,6 +295,21 @@ const OrdersTable = () => {
     });
 
   const { role, id_auth } = useAuth();
+  const {
+    loadPendingSales,
+    currentRegister,
+    virtualAccounts,
+    allAccounts,
+  } = useCashRegister(id_auth);
+
+  const handleCollectDeposit = (lead) => {
+    if (!currentRegister) {
+      toast.error("Abrí una caja para registrar la seña");
+      return;
+    }
+    setDepositLead(lead);
+    setDepositOpen(true);
+  };
 
   return (
     <div className="space-y-4">
@@ -500,8 +540,13 @@ const OrdersTable = () => {
                                 o.product_status || "en espera"
                               ] || "bg-gray-100 text-gray-800"
                             }`}
-                          >
-                            {o.product_status || "en espera"}
+                      >
+                            {o.product_status === "a_pedido" ? "A pedido" : o.product_status || "en espera"}
+                            {o.reservation_expires_at && (
+                              <span className="block text-[10px] font-normal">
+                                Hasta {formatDate(o.reservation_expires_at)}
+                              </span>
+                            )}
                           </Badge>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="start">
@@ -531,7 +576,7 @@ const OrdersTable = () => {
                           ] || "bg-gray-100 text-gray-800"
                         }
                       >
-                        {o.product_status || "en espera"}
+                        {o.product_status === "a_pedido" ? "A pedido" : o.product_status || "en espera"}
                       </Badge>
                     )}
                   </TableCell>
@@ -568,12 +613,12 @@ const OrdersTable = () => {
                                   {(role === "superadmin" ||
                                     role === "owner") && (
                                     <>
-                                      <DropdownMenuItem
-                                        onClick={() => handleCreateSale(o)}
-                                      >
+                                   <DropdownMenuItem
+                                     onClick={() => handleCreateSale(o)}
+                                   >
                                         <IconReceipt2 className="mr-2 h-4 w-4" />
                                         Registrar venta
-                                      </DropdownMenuItem>
+                                     </DropdownMenuItem>
                                       <DropdownMenuItem
                                         onClick={() =>
                                           handleUpdateStatus(o.id, "sin_exito")
@@ -583,7 +628,13 @@ const OrdersTable = () => {
                                         Sin éxito (no concretó)
                                       </DropdownMenuItem>
                                     </>
-                                  )}
+                                   )}
+                                  <DropdownMenuItem
+                                    onClick={() => handleCollectDeposit(o)}
+                                  >
+                                    <IconCash className="mr-2 h-4 w-4" />
+                                    Registrar seña
+                                  </DropdownMenuItem>
                                   <DropdownMenuItem
                                     className="text-red-600"
                                     onClick={() =>
@@ -659,6 +710,20 @@ const OrdersTable = () => {
         open={saleOpen}
         onOpenChange={setSaleOpen}
         lead={saleLead}
+        onSaleCreated={loadPendingSales}
+      />
+
+      <DialogCollectOrderDeposit
+        open={depositOpen}
+        onOpenChange={(value) => {
+          setDepositOpen(value);
+          if (!value) setDepositLead(null);
+        }}
+        lead={depositLead}
+        currentRegister={currentRegister}
+        virtualAccounts={virtualAccounts}
+        allAccounts={allAccounts}
+        onSaved={() => fetchOrders(false)}
       />
     </div>
   );
