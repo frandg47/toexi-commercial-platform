@@ -122,6 +122,7 @@ export default function AftersalesPage() {
   const [paymentMethods, setPaymentMethods] = useState([]);
   const [paymentInstallments, setPaymentInstallments] = useState([]);
   const [accounts, setAccounts] = useState([]);
+  const [isRegisterOpen, setIsRegisterOpen] = useState(false);
   const [salesChannels, setSalesChannels] = useState([]);
   const [fxRate, setFxRate] = useState(null);
   const [usdtRate, setUsdtRate] = useState(null);
@@ -229,7 +230,7 @@ export default function AftersalesPage() {
           .order("installments", { ascending: true }),
         supabase
           .from("accounts")
-          .select("id, name, currency, is_reference_capital")
+          .select("id, name, currency, is_reference_capital, is_efectivo, is_caja_virtual")
           .eq("is_reference_capital", false)
           .order("name", { ascending: true }),
         supabase
@@ -259,6 +260,23 @@ export default function AftersalesPage() {
 
     fetchHelpers();
   }, [isAllowed]);
+
+  useEffect(() => {
+    const checkRegister = async () => {
+      const { data } = await supabase
+        .from("cash_registers")
+        .select("id")
+        .eq("status", "open")
+        .maybeSingle();
+      setIsRegisterOpen(!!data);
+    };
+    checkRegister();
+  }, []);
+
+  const displayAccounts = useMemo(() => {
+    if (isRegisterOpen) return accounts.filter((a) => !a.is_efectivo && !a.is_caja_virtual);
+    return accounts;
+  }, [accounts, isRegisterOpen]);
 
   const filteredDevices = useMemo(() => {
     const search = filters.search.trim().toLowerCase();
@@ -553,8 +571,8 @@ export default function AftersalesPage() {
     }));
 
   const getAccountsForPayment = (payment) => {
-    if (!payment?.method_name) return accounts;
-    return accounts.filter(
+    if (!payment?.method_name) return displayAccounts;
+    return displayAccounts.filter(
       (account) => account.currency === getPaymentDisplayCurrency(payment.method_name),
     );
   };

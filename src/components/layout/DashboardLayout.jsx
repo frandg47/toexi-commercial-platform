@@ -18,11 +18,14 @@ import {
   IconReceipt,
   IconBuildingBank,
   IconTool,
+  IconArrowsExchange,
 } from "@tabler/icons-react";
 
 import SheetNewSale from "@/components/SheetNewSale";
 import SheetNewLead from "@/components/SheetNewLead";
+import SheetCanje from "@/components/SheetCanje";
 import { useAuth } from "@/context/AuthContextProvider";
+import { useCashRegister } from "@/hooks/useCashRegister";
 
 const navMainBase = [
   { title: "Panel principal", url: "/dashboard", icon: IconDashboard },
@@ -33,6 +36,7 @@ const navMainBase = [
   { title: "Equipo", url: "/dashboard/team", icon: IconUsersGroup },
   { title: "Top Vendedores", url: "/dashboard/top-sellers", icon: IconMedal },
   { title: "Cotizador", url: "/dashboard/quick-payment-calculator", icon: IconCalculator },
+  { title: "Caja", url: "/dashboard/cash-register", icon: IconCash, external: true },
   { title: "Gastos", url: "/dashboard/expenses", icon: IconReceipt },
   { title: "Postventa", url: "/dashboard/after-sales", icon: IconTool },
   { title: "Finanzas", url: "/dashboard/finance", icon: IconBuildingBank },
@@ -47,9 +51,11 @@ const navSecondary = [
 export default function DashboardLayout() {
   const [saleOpen, setSaleOpen] = useState(false);
   const [leadOpen, setLeadOpen] = useState(false);
+  const [canjeOpen, setCanjeOpen] = useState(false);
   const location = useLocation();
   const { user, role } = useAuth();
   const isOwner = role?.toLowerCase() === "owner";
+  const { loadPendingSales } = useCashRegister(user?.id);
 
   const pageTitles = {
     "/dashboard": "Panel principal",
@@ -91,6 +97,7 @@ export default function DashboardLayout() {
         actionButtons={[
           { label: "Nuevo pedido", onClick: () => setLeadOpen(true) },
           { label: "Nueva venta", onClick: () => setSaleOpen(true) },
+          { label: "Plan canje", onClick: () => setCanjeOpen(true), icon: IconArrowsExchange, badge: "nuevo" },
         ]}
       />
 
@@ -102,11 +109,16 @@ export default function DashboardLayout() {
         </main>
       </SidebarInset>
 
-      <SheetNewSale open={saleOpen} onOpenChange={setSaleOpen} lead={null} />
+      <SheetNewSale open={saleOpen} onOpenChange={setSaleOpen} lead={null} onSaleCreated={loadPendingSales} />
       <SheetNewLead
         open={leadOpen}
         onOpenChange={setLeadOpen}
         sellerId={user?.id}
+      />
+      <SheetCanje
+        open={canjeOpen}
+        onOpenChange={setCanjeOpen}
+        userId={user?.id}
       />
     </SidebarProvider>
   );

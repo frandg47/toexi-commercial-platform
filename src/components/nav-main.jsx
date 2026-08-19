@@ -1,9 +1,9 @@
 import { useState } from "react";
-import { NavLink, useLocation, useNavigate } from "react-router-dom";
+import { NavLink, useLocation } from "react-router-dom";
 import { SidebarGroup, SidebarGroupContent, SidebarMenu, SidebarMenuItem, } from "@/components/ui/sidebar";
 import { IconCirclePlusFilled, IconChevronDown, IconInfoCircle, } from "@tabler/icons-react";
 import { Button } from "@/components/ui/button";
-import { toast } from "sonner";
+import { Badge } from "@/components/ui/badge";
 import { useSidebar } from "@/components/ui/sidebar";
 
 
@@ -38,6 +38,11 @@ export function NavMain({
                 >
                   <IconCirclePlusFilled className="h-5 w-5" />
                   {!collapsed && <span className="ml-2">{btn.label}</span>}
+                  {!collapsed && btn.badge && (
+                    <Badge className="ml-auto bg-green-500 text-white border-0 text-[10px] px-1.5 py-0 h-5 font-semibold" variant="outline">
+                      {btn.badge}
+                    </Badge>
+                  )}
                 </Button>
               </SidebarMenuItem>
             ))}

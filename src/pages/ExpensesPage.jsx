@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { supabase } from "@/lib/supabaseClient";
 import { useAuth } from "@/context/AuthContextProvider";
+import { FEATURES } from "@/config/features";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -234,7 +235,7 @@ const renderCategoryBadge = (category) => {
 };
 
 export default function ExpensesPage() {
-  const { role } = useAuth();
+  const { role, user } = useAuth();
   const isOwner = role?.toLowerCase() === "owner";
 
   const [section, setSection] = useState("expenses");
@@ -242,6 +243,7 @@ export default function ExpensesPage() {
   const [fxRate, setFxRate] = useState(null);
   const [usdtRate, setUsdtRate] = useState(null);
   const [accounts, setAccounts] = useState([]);
+  const [isRegisterOpen, setIsRegisterOpen] = useState(false);
   const [balanceMovements, setBalanceMovements] = useState([]);
   const [expenses, setExpenses] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -385,7 +387,7 @@ export default function ExpensesPage() {
         supabase
           .from("accounts")
           .select(
-            "id, name, currency, initial_balance, notes, include_in_balance, is_reference_capital",
+            "id, name, currency, initial_balance, notes, include_in_balance, is_reference_capital, is_efectivo, is_caja_virtual",
           )
           .eq("is_reference_capital", false)
           .order("name", { ascending: true }),
@@ -415,13 +417,30 @@ export default function ExpensesPage() {
     load();
   }, [reloadExpenses]);
 
+  useEffect(() => {
+    const checkRegister = async () => {
+      const { data } = await supabase
+        .from("cash_registers")
+        .select("id")
+        .eq("status", "open")
+        .maybeSingle();
+      setIsRegisterOpen(!!data);
+    };
+    checkRegister();
+  }, []);
+
+  const displayAccounts = useMemo(() => {
+    if (isRegisterOpen) return accounts.filter((a) => !a.is_efectivo && !a.is_caja_virtual);
+    return accounts;
+  }, [accounts, isRegisterOpen]);
+
   const selectedAccount = useMemo(
-    () => accounts.find((a) => String(a.id) === String(expenseForm.account_id)),
-    [accounts, expenseForm.account_id],
+    () => displayAccounts.find((a) => String(a.id) === String(expenseForm.account_id)),
+    [displayAccounts, expenseForm.account_id],
   );
   const selectedIncomeAccount = useMemo(
-    () => accounts.find((a) => String(a.id) === String(incomeForm.account_id)),
-    [accounts, incomeForm.account_id],
+    () => displayAccounts.find((a) => String(a.id) === String(incomeForm.account_id)),
+    [displayAccounts, incomeForm.account_id],
   );
   const accountBalances = useMemo(() => {
     const totals = new Map();
@@ -438,7 +457,7 @@ export default function ExpensesPage() {
       totals.set(movement.account_id, entry);
     });
 
-    return accounts.map((acc) => {
+    return displayAccounts.map((acc) => {
       const totalsForAccount = totals.get(acc.id) || {
         income: 0,
         expense: 0,
@@ -452,7 +471,7 @@ export default function ExpensesPage() {
         current_balance: current,
       };
     });
-  }, [accounts, balanceMovements]);
+  }, [displayAccounts, balanceMovements]);
 
   const balanceByAccountId = useMemo(() => {
     return new Map(accountBalances.map((acc) => [acc.id, acc.current_balance]));
@@ -466,10 +485,10 @@ export default function ExpensesPage() {
     [categories],
   );
   const payAccountOptions = useMemo(() => {
-    if (!payExpense) return accounts;
-    if (!payExpense.currency) return accounts;
-    return accounts.filter((acc) => acc.currency === payExpense.currency);
-  }, [accounts, payExpense]);
+    if (!payExpense) return displayAccounts;
+    if (!payExpense.currency) return displayAccounts;
+    return displayAccounts.filter((acc) => acc.currency === payExpense.currency);
+  }, [displayAccounts, payExpense]);
 
   const selectedPayAccount = useMemo(() => {
     return accountBalances.find(
@@ -548,6 +567,24 @@ export default function ExpensesPage() {
 
     const amount = Number(expenseForm.amount || 0);
     if (!amount || Number.isNaN(amount)) return toast.error("Monto invalido");
+
+    // Verificar caja abierta si el módulo está activo (solo para gastos de caja)
+    if (FEATURES.CASH_REGISTER && expenseForm.type === "variable") {
+      const { data: cashRegister } = await supabase
+        .from("cash_registers")
+        .select("id")
+        .eq("user_id", user?.id)
+        .eq("register_date", new Date().toISOString().slice(0, 10))
+        .eq("status", "open")
+        .maybeSingle();
+
+      if (!cashRegister) {
+        return toast.error("Debe abrir la caja primero antes de registrar gastos", {
+          description: "Andá a Dashboard > Caja para abrir la caja del día",
+          duration: 6000,
+        });
+      }
+    }
 
     let currency = "ARS";
     let rate = null;
@@ -693,7 +730,7 @@ export default function ExpensesPage() {
     const amount = Number(editForm.amount || 0);
     if (!amount || Number.isNaN(amount)) return toast.error("Monto invalido");
 
-    const selectedEditAccount = accounts.find(
+    const selectedEditAccount = displayAccounts.find(
       (acc) => String(acc.id) === String(editForm.account_id),
     );
     if (!selectedEditAccount) {
@@ -1106,7 +1143,7 @@ export default function ExpensesPage() {
                       />
                     </SelectTrigger>
                     <SelectContent className="z-[9999]">
-                      {accounts.map((acc) => (
+                      {displayAccounts.map((acc) => (
                         <SelectItem key={acc.id} value={String(acc.id)}>
                           {acc.name} ({acc.currency})
                         </SelectItem>
@@ -1465,7 +1502,7 @@ export default function ExpensesPage() {
                     </SelectTrigger>
                     <SelectContent className="z-[9999]">
                       <SelectItem value="all">Todas</SelectItem>
-                      {accounts.map((acc) => (
+                      {displayAccounts.map((acc) => (
                         <SelectItem key={acc.id} value={String(acc.id)}>
                           {acc.name}
                         </SelectItem>
@@ -1615,7 +1652,7 @@ export default function ExpensesPage() {
                   <SelectValue placeholder="Cuenta" />
                 </SelectTrigger>
                 <SelectContent className="z-[9999]">
-                  {accounts.map((acc) => (
+                  {displayAccounts.map((acc) => (
                     <SelectItem key={acc.id} value={String(acc.id)}>
                       {acc.name} ({acc.currency})
                     </SelectItem>
@@ -1777,7 +1814,7 @@ export default function ExpensesPage() {
                   <SelectValue placeholder="Cuenta" />
                 </SelectTrigger>
                 <SelectContent className="z-[9999]">
-                  {accounts.map((acc) => (
+                  {displayAccounts.map((acc) => (
                     <SelectItem key={acc.id} value={String(acc.id)}>
                       {acc.name} ({acc.currency})
                     </SelectItem>

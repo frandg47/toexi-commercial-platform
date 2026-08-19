@@ -11,6 +11,7 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { supabase } from "@/lib/supabaseClient";
 import { toast } from "sonner";
+import { FEATURES } from "@/config/features";
 
 export default function DialogSaleInvoice({ open, onClose, sale, subtotalWithSurcharge }) {
   if (!sale) return null;
@@ -80,6 +81,7 @@ export default function DialogSaleInvoice({ open, onClose, sale, subtotalWithSur
         p_sales_channel_id: safeSale.sales_channel_id || null,
         p_fx_rate: safeSale.fx_rate_used,
         p_notes: safeSale.notes,
+        p_status: safeSale.status || "vendido",
 
         p_discount_type: safeSale.discount_type || null,
         p_discount_value: safeSale.discount_value || 0,
@@ -110,6 +112,32 @@ export default function DialogSaleInvoice({ open, onClose, sale, subtotalWithSur
       const { data, error } = await supabase.rpc("create_sale_with_imeis", payload);
 
       if (error) throw error;
+
+      // Registrar en caja diaria si el módulo está activo (solo para ventas completadas)
+      if (FEATURES.CASH_REGISTER && safeSale.seller_id && safeSale.status !== "pending") {
+        try {
+          const today = new Date().toISOString().slice(0, 10);
+          const { data: cashRegister } = await supabase
+            .from("cash_registers")
+            .select("id")
+            .eq("user_id", safeSale.seller_id)
+            .eq("register_date", today)
+            .eq("status", "open")
+            .maybeSingle();
+
+          if (cashRegister && totalDueARS > 0) {
+            await supabase.rpc("register_sale_in_cash_register", {
+              p_register_id: cashRegister.id,
+              p_amount: totalDueARS,
+              p_currency: "ARS",
+              p_sale_id: data.sale_id,
+            });
+          }
+        } catch (cashErr) {
+          console.error("Error registrando en caja:", cashErr);
+          // No bloquear la venta por error en caja
+        }
+      }
 
       toast.success("Venta registrada con éxito");
 

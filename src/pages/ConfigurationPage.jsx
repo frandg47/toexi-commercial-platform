@@ -16,6 +16,7 @@ import {
   IconCash,
   IconBox,
 } from "@tabler/icons-react";
+import CashRegisterHistoryPanel from "@/components/cash-register/CashRegisterHistoryPanel";
 
 const ConfigurationPage = () => {
   const navigate = useNavigate();
@@ -94,6 +95,12 @@ const ConfigurationPage = () => {
       icon: <IconCategory2 className="h-10 w-10 text-slate-700" />,
       path: "/dashboard/settings/catalog/categories",
     },
+    {
+      id: "historical-cash-register",
+      label: "Historial de caja",
+      icon: <IconCash className="h-10 w-10 text-orange-600" />,
+      path: "/dashboard/settings/historical-cash-register",
+    }
   ];
 
   return (
@@ -121,6 +128,7 @@ const ConfigurationPage = () => {
           </Card>
         ))}
       </div>
+      
     </>
   );
 };

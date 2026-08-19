@@ -4,6 +4,7 @@ import { AuthContextProvider, useAuth } from "./context/AuthContextProvider";
 import { Button } from "@/components/ui/button";
 
 import DashboardLayout from "./components/layout/DashboardLayout";
+import CashRegisterLayout from "./components/layout/CashRegisterLayout";
 import SellerLayout from "./components/layout/SellerLayout";
 
 import Dashboard from "./pages/Dashboard";
@@ -27,6 +28,7 @@ import ExpensesPage from "./pages/ExpensesPage";
 import FinancePage from "./pages/FinancePage";
 import ReportsPage from "./pages/ReportsPage";
 import AftersalesPage from "./pages/AftersalesPage";
+import CashRegisterPage from "./pages/CashRegisterPage";
 
 // âš™ï¸ ConfiguraciÃ³n
 import ComissionConfig from "./pages/config/ComissionConfig";
@@ -39,6 +41,7 @@ import ProvidersConfig from "./pages/config/ProvidersConfig";
 import PurchasesConfig from "./pages/config/PurchasesConfig";
 import AccountsConfig from "./pages/config/AccountsConfig";
 import MovementsConfig from "./pages/config/MovementsConfig";
+import CashRegisterHistoryPanel from "@/components/cash-register/CashRegisterHistoryPanel";
 
 import InstallPromptBanner from "./components/InstallPromptBanner";
 import IOSInstallBanner from "@/components/IOSInstallBanner";
@@ -181,6 +184,9 @@ export default function App() {
             <Route path="settings/purchases" element={<PurchasesConfig />} />
             <Route path="settings/accounts" element={<AccountsConfig />} />
             <Route
+              path="settings/historical-cash-register"
+              element={<CashRegisterHistoryPanel />} />
+            <Route
               path="movements"
               element={
                 <ProtectedRoute allowedRoles={["owner"]}>
@@ -188,6 +194,18 @@ export default function App() {
                 </ProtectedRoute>
               }
             />
+          </Route>
+
+          {/* CAJA DIARIA (layout separado sin sidebar) */}
+          <Route
+            path="/dashboard/cash-register"
+            element={
+              <ProtectedRoute allowedRoles={["superadmin", "owner"]}>
+                <CashRegisterLayout />
+              </ProtectedRoute>
+            }
+          >
+            <Route index element={<CashRegisterPage />} />
           </Route>
 
           {/* ðŸ›ï¸ VISTA DE VENDEDORES */}
