@@ -1,5 +1,9 @@
 import { useState, useCallback, useEffect } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import {
+  calculateAccountBalances,
+  isMovementAvailable,
+} from "@/utils/cashAccountBalances";
 
 function addBusinessDays(startDate, days) {
   const result = new Date(startDate);
@@ -29,6 +33,7 @@ export function useCashRegister(userId) {
   const computeCajaBalances = useCallback((movs) => {
     const result = { ARS: 0, USD: 0, USDT: 0 };
     for (const m of movs) {
+      if (!isMovementAvailable(m)) continue;
       const cur = m.currency || "ARS";
       if (!result[cur]) result[cur] = 0;
       if (["opening", "sale_income", "income", "transfer_in"].includes(m.type)) {
@@ -92,26 +97,10 @@ export function useCashRegister(userId) {
 
       const { data: movements } = await supabase
         .from("account_movements")
-        .select("account_id, type, amount")
+        .select("account_id, type, amount, accreditation_status, available_on")
         .in("account_id", accounts.map((a) => a.id));
 
-      const totals = new Map();
-      (movements || []).forEach((m) => {
-        const e = totals.get(m.account_id) || { income: 0, expense: 0 };
-        if (m.type === "income") e.income += Number(m.amount || 0);
-        else if (m.type === "expense") e.expense += Number(m.amount || 0);
-        totals.set(m.account_id, e);
-      });
-
-      setVirtualAccounts(
-        accounts.map((acc) => {
-          const t = totals.get(acc.id) || { income: 0, expense: 0 };
-          return {
-            ...acc,
-            current_balance: Number(acc.initial_balance || 0) + t.income - t.expense,
-          };
-        })
-      );
+      setVirtualAccounts(calculateAccountBalances(accounts, movements));
     } catch (err) {
       console.error("Error loading virtual accounts:", err);
     }
@@ -146,26 +135,10 @@ export function useCashRegister(userId) {
 
       const { data: movements } = await supabase
         .from("account_movements")
-        .select("account_id, type, amount")
+        .select("account_id, type, amount, accreditation_status, available_on")
         .in("account_id", accounts.map((a) => a.id));
 
-      const totals = new Map();
-      (movements || []).forEach((m) => {
-        const e = totals.get(m.account_id) || { income: 0, expense: 0 };
-        if (m.type === "income") e.income += Number(m.amount || 0);
-        else if (m.type === "expense") e.expense += Number(m.amount || 0);
-        totals.set(m.account_id, e);
-      });
-
-      setEfectivoAccounts(
-        accounts.map((acc) => {
-          const t = totals.get(acc.id) || { income: 0, expense: 0 };
-          return {
-            ...acc,
-            current_balance: Number(acc.initial_balance || 0) + t.income - t.expense,
-          };
-        })
-      );
+      setEfectivoAccounts(calculateAccountBalances(accounts, movements));
     } catch (err) {
       console.error("Error loading efectivo accounts:", err);
     }
@@ -186,26 +159,10 @@ export function useCashRegister(userId) {
 
       const { data: movements } = await supabase
         .from("account_movements")
-        .select("account_id, type, amount")
+        .select("account_id, type, amount, accreditation_status, available_on")
         .in("account_id", accounts.map((a) => a.id));
 
-      const totals = new Map();
-      (movements || []).forEach((m) => {
-        const e = totals.get(m.account_id) || { income: 0, expense: 0 };
-        if (m.type === "income") e.income += Number(m.amount || 0);
-        else if (m.type === "expense") e.expense += Number(m.amount || 0);
-        totals.set(m.account_id, e);
-      });
-
-      setAllAccounts(
-        accounts.map((acc) => {
-          const t = totals.get(acc.id) || { income: 0, expense: 0 };
-          return {
-            ...acc,
-            current_balance: Number(acc.initial_balance || 0) + t.income - t.expense,
-          };
-        })
-      );
+      setAllAccounts(calculateAccountBalances(accounts, movements));
     } catch (err) {
       console.error("Error loading all accounts:", err);
     }
@@ -851,6 +808,7 @@ export function useCashRegister(userId) {
     if (!movements.length) return { ARS: 0, USD: 0, USDT: 0 };
     return movements.reduce(
       (acc, m) => {
+        if (!isMovementAvailable(m)) return acc;
         const currency = m.currency || "ARS";
         if (!acc[currency]) acc[currency] = 0;
         if (["opening", "sale_income", "income", "transfer_in"].includes(m.type)) {
@@ -873,6 +831,7 @@ export function useCashRegister(userId) {
     };
 
     for (const m of movements) {
+      if (!isMovementAvailable(m)) continue;
       const cur = m.currency || "ARS";
       if (!result[cur]) result[cur] = { efectivo: 0, transferencia: 0, tarjeta: 0, otros: 0 };
 

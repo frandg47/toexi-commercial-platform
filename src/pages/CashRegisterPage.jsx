@@ -76,6 +76,7 @@ const formatRateDate = (dateStr) => {
 
 export default function CashRegisterPage() {
   const { user, profile } = useAuth();
+  // console.log("profile", user);
   const userId = user?.id;
 
   const {
@@ -319,29 +320,9 @@ export default function CashRegisterPage() {
 
     const movementsToInsert = [];
 
-    // For each caja account, calculate expected balance from cash_register_movements
+    // The account ledger is the source of truth for the physical cash balance.
     for (const acc of cashAccounts) {
-      // Calculate expected balance for this account
-      // Group movements by currency and match to account
-      const accountMovements = movements.filter((m) => {
-        const isLinkedToAccount =
-          m.account_id != null && Number(m.account_id) === Number(acc.id);
-        const isLegacyUnlinkedCash =
-          m.account_id == null && m.currency === acc.currency;
-        return isLinkedToAccount || isLegacyUnlinkedCash;
-      });
-
-      let expectedBalance = 0;
-      for (const m of accountMovements) {
-        if (
-          ["opening", "sale_income", "income", "transfer_in"].includes(m.type)
-        ) {
-          expectedBalance += Number(m.amount || 0);
-        }
-        if (["expense", "withdrawal", "transfer_out"].includes(m.type)) {
-          expectedBalance -= Number(m.amount || 0);
-        }
-      }
+      const expectedBalance = Number(acc.current_balance || 0);
 
       // Get counted amount for this currency
       const counted = countedAmounts.find((a) => a.currency === acc.currency);
@@ -389,7 +370,7 @@ export default function CashRegisterPage() {
         <div className="flex flex-col gap-4 rounded-lg border border-blue-900/20 bg-gradient-to-r from-card to-blue-950/10 p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-4">
             <Avatar className="h-12 w-12 border-2 border-primary/20">
-              <AvatarImage src={profile?.avatar_url} alt={profile?.name} />
+              <AvatarImage src={user?.user_metadata.avatar_url} alt={profile?.name} />
               <AvatarFallback className="text-sm font-bold bg-primary/10 text-primary">
                 {userInitials}
               </AvatarFallback>
@@ -768,6 +749,7 @@ export default function CashRegisterPage() {
           usdtRate={usdtRate}
           accountMovements={accountMovements}
           onSyncEfectivo={handleSyncEfectivo}
+          efectivoAccounts={efectivoAccounts}
         />
       )}
 
@@ -792,6 +774,7 @@ export default function CashRegisterPage() {
         usdtRate={usdtRate}
         accountMovements={accountMovements}
         onSyncEfectivo={handleSyncEfectivo}
+        efectivoAccounts={efectivoAccounts}
       />
 
       <DialogRegisterMovement

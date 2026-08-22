@@ -109,7 +109,7 @@ export default function CashRegisterDetail({ register, open, onOpenChange }) {
         <DialogHeader>
           <DialogTitle>Detalle de Caja</DialogTitle>
           <DialogDescription>
-            {new Date(register.register_date).toLocaleDateString("es-AR")} — {userName} — {register.currency}
+            {new Date(register.register_date + "T12:00:00").toLocaleDateString("es-AR")} — {userName} — {register.currency}
           </DialogDescription>
         </DialogHeader>
 

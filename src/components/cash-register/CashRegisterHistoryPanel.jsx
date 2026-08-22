@@ -14,12 +14,12 @@ import { IconHistory, IconRefresh } from "@tabler/icons-react";
 import { toast } from "sonner";
 import CashRegisterHistory from "./CashRegisterHistory";
 import CashRegisterDetail from "./CashRegisterDetail";
+import DialogCloseCashRegister from "./DialogCloseCashRegister";
 
 const PAGE_SIZE = 20;
 
 export default function CashRegisterHistoryPanel() {
   const [history, setHistory] = useState([]);
-  const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
@@ -31,15 +31,11 @@ export default function CashRegisterHistoryPanel() {
   });
   const [selectedRegister, setSelectedRegister] = useState(null);
   const [detailOpen, setDetailOpen] = useState(false);
-
-  const loadUsers = useCallback(async () => {
-    const { data, error } = await supabase
-      .from("users")
-      .select("id_auth, name, last_name, email")
-      .order("name", { ascending: true });
-
-    if (!error) setUsers(data || []);
-  }, []);
+  const [closeRegisterData, setCloseRegisterData] = useState(null);
+  const [closeDialogOpen, setCloseDialogOpen] = useState(false);
+  const [closeLoading, setCloseLoading] = useState(false);
+  const [exchangeRate, setExchangeRate] = useState(null);
+  const [usdtRate, setUsdtRate] = useState(null);
 
   const loadHistory = useCallback(async () => {
     setLoading(true);
@@ -93,10 +89,6 @@ export default function CashRegisterHistoryPanel() {
   }, [filters, page]);
 
   useEffect(() => {
-    loadUsers();
-  }, [loadUsers]);
-
-  useEffect(() => {
     loadHistory();
   }, [loadHistory]);
 
@@ -105,9 +97,109 @@ export default function CashRegisterHistoryPanel() {
     setFilters((current) => ({ ...current, [key]: value }));
   };
 
-  const clearFilters = () => {
-    setPage(1);
-    setFilters({ dateFrom: "", dateTo: "", userId: "all", status: "all" });
+  const openCloseRegister = async (register) => {
+    setCloseLoading(true);
+
+    const [movementsResponse, accountMovementsResponse, blueRateResponse, usdtRateResponse, cashAccountsResponse] =
+      await Promise.all([
+        supabase
+          .from("cash_register_movements")
+          .select("*, accounts!cash_register_movements_account_id_fkey(name, currency, is_efectivo, is_caja_virtual)")
+          .eq("cash_register_id", register.id)
+          .order("created_at", { ascending: true }),
+        supabase
+          .from("account_movements")
+          .select("*, accounts(name, currency)")
+          .in("related_table", ["cash_register", "cash_register_opening_adjustment"])
+          .eq("related_id", register.id),
+        supabase
+          .from("fx_rates")
+          .select("rate")
+          .eq("source", "blue")
+          .eq("is_active", true)
+          .maybeSingle(),
+        supabase
+          .from("accounts")
+          .select("id")
+          .eq("is_efectivo", true),
+        supabase
+          .from("fx_rates")
+          .select("rate")
+          .eq("source", "USDT")
+          .eq("is_active", true)
+          .maybeSingle(),
+      ]);
+
+    const error =
+      movementsResponse.error ||
+      accountMovementsResponse.error ||
+      blueRateResponse.error ||
+      usdtRateResponse.error ||
+      cashAccountsResponse.error;
+
+    if (error) {
+      toast.error("No se pudo cargar la caja para cerrar", {
+        description: error.message,
+      });
+      setCloseLoading(false);
+      return;
+    }
+
+    setExchangeRate(Number(blueRateResponse.data?.rate || 0) || null);
+    setUsdtRate(Number(usdtRateResponse.data?.rate || 0) || null);
+    setCloseRegisterData({
+      register,
+      movements: movementsResponse.data || [],
+      accountMovements: accountMovementsResponse.data || [],
+      efectivoAccounts: cashAccountsResponse.data || [],
+    });
+    setCloseLoading(false);
+    setCloseDialogOpen(true);
+  };
+
+  const closeHistoricalRegister = async (amounts, notes) => {
+    if (!closeRegisterData?.register) {
+      return { ok: false, error: "No hay caja seleccionada" };
+    }
+
+    setCloseLoading(true);
+    try {
+      const { error } = await supabase.rpc("close_cash_register", {
+        p_register_id: closeRegisterData.register.id,
+        p_closed_amounts: amounts,
+        p_notes: notes,
+      });
+
+      if (error) throw error;
+
+      const { data: updatedRegister, error: updatedError } = await supabase
+        .from("cash_registers")
+        .select("*")
+        .eq("id", closeRegisterData.register.id)
+        .single();
+
+      if (updatedError) throw updatedError;
+
+      const { data: closedMovements, error: movementsError } = await supabase
+        .from("cash_register_movements")
+        .select("*, accounts!cash_register_movements_account_id_fkey(name, currency, is_efectivo, is_caja_virtual)")
+        .eq("cash_register_id", closeRegisterData.register.id)
+        .order("created_at", { ascending: true });
+
+      if (movementsError) throw movementsError;
+
+      await loadHistory();
+      return {
+        ok: true,
+        register: { ...updatedRegister, users: closeRegisterData.register.users },
+        movements: closedMovements || [],
+      };
+    } catch (error) {
+      console.error("Error cerrando caja desde historial:", error);
+      return { ok: false, error: error.message };
+    } finally {
+      setCloseLoading(false);
+    }
   };
 
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
@@ -202,6 +294,7 @@ export default function CashRegisterHistoryPanel() {
               setSelectedRegister(register);
               setDetailOpen(true);
             }}
+            onCloseRegister={openCloseRegister}
           />
 
           <div className="flex items-center justify-between text-sm text-muted-foreground">
@@ -235,6 +328,21 @@ export default function CashRegisterHistoryPanel() {
           open={detailOpen}
           onOpenChange={setDetailOpen}
         />
+
+        {closeRegisterData && (
+          <DialogCloseCashRegister
+            open={closeDialogOpen}
+            onOpenChange={setCloseDialogOpen}
+            register={closeRegisterData.register}
+            movements={closeRegisterData.movements}
+            onConfirm={closeHistoricalRegister}
+            loading={closeLoading}
+            exchangeRate={exchangeRate}
+            usdtRate={usdtRate}
+            accountMovements={closeRegisterData.accountMovements}
+            efectivoAccounts={closeRegisterData.efectivoAccounts}
+          />
+        )}
       </Card>
     </div>
   );

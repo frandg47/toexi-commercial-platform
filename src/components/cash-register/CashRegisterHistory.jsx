@@ -8,7 +8,7 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { IconEye, IconCalendar } from "@tabler/icons-react";
+import { IconEye, IconCalendar, IconLockOpen } from "@tabler/icons-react";
 
 const formatARS = (n) =>
   new Intl.NumberFormat("es-AR", {
@@ -52,7 +52,12 @@ const statusConfig = {
   },
 };
 
-export default function CashRegisterHistory({ history, loading, onViewDetail }) {
+export default function CashRegisterHistory({
+  history,
+  loading,
+  onViewDetail,
+  onCloseRegister,
+}) {
   if (loading) {
     return (
       <div className="rounded-md border p-8 text-center text-muted-foreground">
@@ -96,7 +101,7 @@ export default function CashRegisterHistory({ history, loading, onViewDetail }) 
                 <TableCell className="font-medium">
                   <div className="flex items-center gap-1.5">
                     <IconCalendar className="h-3.5 w-3.5 text-muted-foreground" />
-                    {new Date(reg.register_date).toLocaleDateString("es-AR")}
+                    {new Date(reg.register_date + "T12:00:00").toLocaleDateString("es-AR")}
                   </div>
                 </TableCell>
                 <TableCell>{userName}</TableCell>
@@ -134,6 +139,17 @@ export default function CashRegisterHistory({ history, loading, onViewDetail }) 
                   </Badge>
                 </TableCell>
                 <TableCell className="text-right">
+                  {reg.status === "open" && onCloseRegister ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="mr-2"
+                      onClick={() => onCloseRegister(reg)}
+                    >
+                      <IconLockOpen className="mr-1 h-4 w-4" />
+                      Cerrar
+                    </Button>
+                  ) : null}
                   <Button
                     variant="ghost"
                     size="icon"

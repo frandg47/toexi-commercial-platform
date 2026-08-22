@@ -47,6 +47,19 @@ const CURRENCIES = ["ARS", "USD", "USDT"];
 
 const THRESHOLDS = { ARS: 3000, USD: 5, USDT: 5 };
 
+const todayDateKey = () =>
+  new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Argentina/Buenos_Aires",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+
+const isMovementAvailable = (movement) => {
+  if (movement?.accreditation_status !== "pending") return true;
+  return Boolean(movement.available_on && movement.available_on <= todayDateKey());
+};
+
 export default function DialogCloseCashRegister({
   open,
   onOpenChange,
@@ -58,7 +71,17 @@ export default function DialogCloseCashRegister({
   usdtRate,
   accountMovements = [],
   onSyncEfectivo,
+  efectivoAccounts = [],
 }) {
+  const cashAccountIds = useMemo(
+    () =>
+      new Set(
+        (Array.isArray(efectivoAccounts) ? efectivoAccounts : []).map(
+          (account) => String(account.id),
+        ),
+      ),
+    [efectivoAccounts],
+  );
   const [countedCash, setCountedCash] = useState({
     ARS: "",
     USD: "",
@@ -72,6 +95,7 @@ export default function DialogCloseCashRegister({
     if (!movements?.length) return { ARS: 0, USD: 0, USDT: 0 };
     return movements.reduce(
       (acc, m) => {
+        if (!isMovementAvailable(m)) return acc;
         const currency = m.currency || "ARS";
         if (!acc[currency]) acc[currency] = 0;
         if (
@@ -97,6 +121,7 @@ export default function DialogCloseCashRegister({
     const cards = [];
 
     for (const m of movements) {
+      if (!isMovementAvailable(m)) continue;
       const name = (m.payment_method_name || "").toLowerCase();
       const cur = m.currency || "ARS";
       const isExpense = ["expense", "withdrawal", "transfer_out"].includes(
@@ -108,7 +133,13 @@ export default function DialogCloseCashRegister({
         m.type === "transfer_out" ||
         name.includes("transfer");
       const isCard = name.includes("tarjeta") || name.includes("card");
-      const isLinkedCash = m.accounts?.is_efectivo === true;
+      const linkedAccount = Array.isArray(m.accounts)
+        ? m.accounts[0]
+        : m.accounts;
+      const isLinkedCash =
+        cashAccountIds.has(String(m.account_id)) ||
+        linkedAccount?.is_efectivo === true ||
+        String(linkedAccount?.is_efectivo).toLowerCase() === "true";
       const isLegacyUnlinkedCash =
         !m.account_id && !isTransfer && !isCard;
       const isLegacyCashTransferOut = !m.account_id && m.type === "transfer_out";
@@ -125,10 +156,13 @@ export default function DialogCloseCashRegister({
           "transfer_in",
           "expense",
           "withdrawal",
+          "transfer_out",
         ].includes(m.type)
       )
         continue;
 
+      // A transfer out linked to a physical cash account is a cash outflow,
+      // so the linked account is checked before treating it as a bank transfer.
       if (isLinkedCash || isLegacyUnlinkedCash || isLegacyCashTransferOut) {
         cash[cur] = (cash[cur] || 0) + amount;
       } else if (isTransfer) {
@@ -141,13 +175,17 @@ export default function DialogCloseCashRegister({
     }
 
     return { cash, transfers, cards };
-  }, [movements]);
+  }, [cashAccountIds, movements]);
+
+  const expectedCash = useMemo(() => {
+    return categorized.cash;
+  }, [categorized.cash]);
 
   const activeCurrencies = CURRENCIES.filter(
     (c) =>
       c === "ARS" ||
       Math.abs(balance[c] || 0) > 0.009 ||
-      Math.abs(categorized.cash[c] || 0) > 0.009 ||
+      Math.abs(expectedCash[c] || 0) > 0.009 ||
       countedCash[c] !== "",
   );
 
@@ -162,11 +200,11 @@ export default function DialogCloseCashRegister({
   );
 
   const cashExpectedARS = useMemo(() => {
-    return Object.entries(categorized.cash).reduce(
+    return Object.entries(expectedCash).reduce(
       (sum, [c, v]) => sum + toARS(v, c),
       0,
     );
-  }, [categorized.cash, toARS]);
+  }, [expectedCash, toARS]);
 
   const transferExpectedARS = useMemo(() => {
     return categorized.transfers.reduce(
@@ -291,7 +329,7 @@ export default function DialogCloseCashRegister({
 
   const perCurrencyDiffs = useMemo(() => {
     return CURRENCIES.map((c) => {
-      const expected = categorized.cash[c] || 0;
+      const expected = expectedCash[c] || 0;
       const counted = Number(countedCash[c] || 0);
       return {
         currency: c,
@@ -301,7 +339,7 @@ export default function DialogCloseCashRegister({
         exceeds: Math.abs(counted - expected) > THRESHOLDS[c],
       };
     });
-  }, [countedCash, categorized.cash]);
+  }, [countedCash, expectedCash]);
 
   const blockingDiffs = perCurrencyDiffs.filter(
     (d) => d.exceeds && countedCash[d.currency] !== "",
@@ -476,7 +514,7 @@ export default function DialogCloseCashRegister({
                     <div className="flex justify-between text-xs text-muted-foreground">
                       <span>{c}</span>
                       <span>
-                        Esperado: {formatCurrency(categorized.cash[c], c)}
+                        Esperado: {formatCurrency(expectedCash[c], c)}
                       </span>
                     </div>
                     <Input
@@ -669,10 +707,10 @@ export default function DialogCloseCashRegister({
               <div className="text-right font-medium">
                 {CURRENCIES.filter(
                   (currency) =>
-                    Math.abs(categorized.cash[currency] || 0) > 0.009,
+                     Math.abs(expectedCash[currency] || 0) > 0.009,
                 ).map((currency) => (
                   <div key={currency}>
-                    {formatCurrency(categorized.cash[currency], currency)}
+                    {formatCurrency(expectedCash[currency], currency)}
                   </div>
                 ))}
               </div>

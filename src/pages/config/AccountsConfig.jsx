@@ -40,6 +40,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { IconEdit } from "@tabler/icons-react";
+import { calculateAccountBalances } from "@/utils/cashAccountBalances";
 
 const formatARS = (n) =>
   new Intl.NumberFormat("es-AR", {
@@ -105,7 +106,7 @@ export default function AccountsConfig() {
     while (true) {
       const { data, error } = await supabase
         .from("account_movements")
-        .select("id, account_id, type, amount")
+        .select("id, account_id, type, amount, accreditation_status, available_on")
         .range(from, from + pageSize - 1);
       if (error) throw error;
       if (!data?.length) break;
@@ -316,36 +317,7 @@ export default function AccountsConfig() {
   };
 
   const accountBalances = useMemo(() => {
-    const totals = new Map();
-    movements.forEach((movement) => {
-      const key = Number(movement.account_id);
-      const entry = totals.get(key) || {
-        income: 0,
-        expense: 0,
-      };
-      if (movement.type === "income") {
-        entry.income += Number(movement.amount || 0);
-      } else if (movement.type === "expense") {
-        entry.expense += Number(movement.amount || 0);
-      }
-      totals.set(key, entry);
-    });
-
-    return accounts.map((acc) => {
-      const key = Number(acc.id);
-      const totalsForAccount = totals.get(key) || {
-        income: 0,
-        expense: 0,
-      };
-      const current =
-        Number(acc.initial_balance || 0) +
-        totalsForAccount.income -
-        totalsForAccount.expense;
-      return {
-        ...acc,
-        current_balance: current,
-      };
-    });
+    return calculateAccountBalances(accounts, movements);
   }, [accounts, movements]);
 
   const sortedAccountBalances = useMemo(() => {
