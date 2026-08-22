@@ -103,6 +103,7 @@ export default function FinancePage() {
   const [loading, setLoading] = useState(false);
   const [monthlyNetIncomeLoading, setMonthlyNetIncomeLoading] = useState(false);
   const [accounts, setAccounts] = useState([]);
+  const [cardAccountIds, setCardAccountIds] = useState(new Set());
   const [balanceMovementsAll, setBalanceMovementsAll] = useState([]);
   const [balanceMovementsFiltered, setBalanceMovementsFiltered] = useState([]);
   const [fxRate, setFxRate] = useState(null);
@@ -139,15 +140,17 @@ export default function FinancePage() {
       { data: variantsData, error: variantsError },
       { data: aftersalesData, error: aftersalesError },
       { data: movementsData, error: movementsError },
+      { data: paymentMethodsData, error: paymentMethodsError },
       { data: salesChannelsData, error: salesChannelsError },
       { data: salesYearsData, error: salesYearsError },
     ] = await Promise.all([
         supabase
           .from("accounts")
           .select(
-          "id, name, currency, initial_balance, include_in_balance, is_reference_capital, is_efectivo, is_caja_virtual",
+          "id, name, currency, initial_balance, active, include_in_balance, is_reference_capital, is_efectivo, is_caja_virtual",
         )
-        .order("name", { ascending: true }),
+          .eq("active", true)
+          .order("name", { ascending: true }),
       supabase
         .from("fx_rates")
         .select("rate")
@@ -171,6 +174,10 @@ export default function FinancePage() {
           .select(
           "account_id, type, amount, currency, accreditation_status, available_on, related_table, related_id",
         ),
+      supabase
+        .from("payment_methods")
+        .select("name, account_id")
+        .eq("is_active", true),
       supabase
         .from("sales_channels")
         .select("id, name")
@@ -267,6 +274,21 @@ export default function FinancePage() {
         ...movement,
         payment_method_name: paymentNames.get(`${movement.related_table}:${movement.related_id}`) || "",
       })));
+    }
+
+    if (paymentMethodsError) {
+      toast.error("No se pudieron cargar las cuentas de tarjetas", {
+        description: paymentMethodsError.message,
+      });
+      setCardAccountIds(new Set());
+    } else {
+      setCardAccountIds(
+        new Set(
+          (paymentMethodsData || [])
+            .filter((method) => method.account_id && isCardPaymentName(method.name))
+            .map((method) => Number(method.account_id)),
+        ),
+      );
     }
 
     if (salesChannelsError) {
@@ -524,6 +546,7 @@ export default function FinancePage() {
     const saleIds = (salesData || []).map((s) => s.id);
     const uniqueSellerIds = [...new Set((salesData || []).map((s) => s.seller_id).filter(Boolean))];
     const saleAccreditedIncome = {};
+    const saleHasPendingMovements = {};
     const sellerRoleMap = {};
     const saleFxRateMap = new Map(
       (salesData || []).map((s) => [s.id, Number(s.fx_rate_used || 0)]),
@@ -564,15 +587,17 @@ export default function FinancePage() {
         const today = todayDateKey();
 
         for (const m of incomeMovements || []) {
+          const saleId = paymentToSale.get(m.related_id);
+          if (!saleId) continue;
+
           if (
             m.accreditation_status === "pending" &&
             m.available_on &&
             m.available_on > today
-          )
+          ) {
+            saleHasPendingMovements[saleId] = true;
             continue;
-
-          const saleId = paymentToSale.get(m.related_id);
-          if (!saleId) continue;
+          }
 
           const amount = Number(m.amount || 0);
           if (!amount) continue;
@@ -615,6 +640,7 @@ export default function FinancePage() {
         ...sale,
         accredited_total_usd:
           saleAccreditedIncome[sale.id] ?? Number(sale.total_usd || 0),
+        income_pending: !saleAccreditedIncome[sale.id] && Boolean(saleHasPendingMovements[sale.id]),
         commission_usd: commissionUsd,
       };
     });
@@ -687,6 +713,7 @@ export default function FinancePage() {
       const saleIds = (salesData || []).map((s) => s.id);
       const uniqueSellerIds = [...new Set((salesData || []).map((s) => s.seller_id).filter(Boolean))];
       const saleAccreditedIncome = {};
+      const saleHasPendingMovements = {};
       const sellerRoleMap = {};
       const saleFxRateMap = new Map(
         (salesData || []).map((s) => [s.id, Number(s.fx_rate_used || 0)]),
@@ -727,15 +754,17 @@ export default function FinancePage() {
           const today = todayDateKey();
 
           for (const m of incomeMovements || []) {
+            const saleId = paymentToSale.get(m.related_id);
+            if (!saleId) continue;
+
             if (
               m.accreditation_status === "pending" &&
               m.available_on &&
               m.available_on > today
-            )
+            ) {
+              saleHasPendingMovements[saleId] = true;
               continue;
-
-          const saleId = paymentToSale.get(m.related_id);
-          if (!saleId) continue;
+            }
 
           const amount = Number(m.amount || 0);
           if (!amount) continue;
@@ -778,6 +807,7 @@ export default function FinancePage() {
           ...sale,
           accredited_total_usd:
             saleAccreditedIncome[sale.id] ?? Number(sale.total_usd || 0),
+          income_pending: !saleAccreditedIncome[sale.id] && Boolean(saleHasPendingMovements[sale.id]),
           commission_usd: commissionUsd,
         };
       });
@@ -818,6 +848,7 @@ export default function FinancePage() {
             ? commission
             : "No aplica",
           "Ganancia Neta (USD)": net,
+          "Acreditación": sale.income_pending ? "Pendiente" : "Acreditado",
         };
       });
 
@@ -837,6 +868,7 @@ export default function FinancePage() {
           { wch: 16 },
           { wch: 18 },
           { wch: 16 },
+          { wch: 14 },
         ];
 
         XLSX.writeFile(wb, `ventas_${monthKey}.xlsx`);
@@ -882,6 +914,7 @@ export default function FinancePage() {
               ? formatCurrency(sale.commission_usd, "USD")
               : "No aplica",
             formatCurrency(net, "USD"),
+            sale.income_pending ? "Pendiente" : "Acreditado",
           ];
         });
 
@@ -898,6 +931,7 @@ export default function FinancePage() {
               "Costo",
               "Comisión",
               "Ganancia Neta",
+              "Acreditación",
             ],
           ],
           body: tableData,
@@ -914,6 +948,7 @@ export default function FinancePage() {
             6: { halign: "right", cellWidth: 25 },
             7: { halign: "right", cellWidth: 25 },
             8: { halign: "right", cellWidth: 25 },
+            9: { cellWidth: 20 },
           },
         });
 
@@ -1062,21 +1097,37 @@ export default function FinancePage() {
 
     accountBalancesAll.forEach((account) => {
       if (!account.include_in_balance) return;
-      if (account.is_efectivo && account.currency === "ARS") result.cashARS += account.current_balance;
-      if (account.is_efectivo && account.currency === "USD") result.cashUSD += account.current_balance;
-      if (account.is_caja_virtual) result.transfers[account.currency] = (result.transfers[account.currency] || 0) + account.current_balance;
+      if (account.is_efectivo && account.currency === "ARS") {
+        result.cashARS += account.current_balance;
+      } else if (account.is_efectivo && account.currency === "USD") {
+        result.cashUSD += account.current_balance;
+      } else if (account.is_caja_virtual) {
+        result.transfers[account.currency] =
+          (result.transfers[account.currency] || 0) + account.current_balance;
+      }
+    });
+
+    // El saldo acreditado sale del saldo neto de las cuentas de tarjeta.
+    accountBalancesAll.forEach((account) => {
+      if (!account.include_in_balance || !cardAccountIds.has(Number(account.id))) return;
+      if (result.cards.accredited[account.currency] !== undefined) {
+        result.cards.accredited[account.currency] += account.current_balance;
+      }
     });
 
     balanceMovementsAll.forEach((movement) => {
-      if (movement.type !== "income" || !isCardPaymentName(movement.payment_method_name)) return;
+      if (
+        movement.type !== "income" ||
+        !isCardPaymentName(movement.payment_method_name) ||
+        !isMovementPendingAccreditation(movement)
+      ) return;
       const currency = movement.currency || "ARS";
       const amount = Number(movement.amount || 0);
-      const bucket = isMovementPendingAccreditation(movement) ? "pending" : "accredited";
-      if (result.cards[bucket][currency] !== undefined) result.cards[bucket][currency] += amount;
+      if (result.cards.pending[currency] !== undefined) result.cards.pending[currency] += amount;
     });
 
     return result;
-  }, [accountBalancesAll, balanceMovementsAll]);
+  }, [accountBalancesAll, balanceMovementsAll, cardAccountIds]);
 
   const convertAmountToUsd = useCallback(
     (amount, currency) => {
@@ -1639,7 +1690,14 @@ export default function FinancePage() {
                             )}
                           </TableCell>
                           <TableCell className="text-right">
-                            {formatCurrency(totalSale, "USD")}
+                            <div className="flex items-center justify-end gap-1.5">
+                              {formatCurrency(totalSale, "USD")}
+                              {sale.income_pending && (
+                                <Badge variant="outline" className="border-amber-200 bg-amber-50 text-[10px] text-amber-700">
+                                  Pendiente
+                                </Badge>
+                              )}
+                            </div>
                           </TableCell>
                           <TableCell className="text-right">
                             {formatCurrency(totalCost, "USD")}

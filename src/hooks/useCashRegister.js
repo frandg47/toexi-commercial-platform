@@ -498,6 +498,9 @@ export function useCashRegister(userId) {
             surcharge_value: paymentData.surcharge_value || 0,
             surcharge_amount: paymentData.surcharge_amount || 0,
             total_ars: paymentData.total_ars || sale.total_ars,
+            total_usd: sale.fx_rate_used
+              ? (paymentData.total_ars || sale.total_ars) / Number(sale.fx_rate_used)
+              : sale.total_usd,
           })
           .eq("id", saleId);
 
