@@ -337,6 +337,7 @@ export default function InventoryConfig() {
           acc[variantId] = {
             total: 0,
             available: 0,
+            reserved: 0,
             sold: 0,
             defective: 0,
             inRepair: 0,
@@ -346,6 +347,7 @@ export default function InventoryConfig() {
 
         acc[variantId].total += 1;
         if (unit.status === "available") acc[variantId].available += 1;
+        else if (unit.status === "reserved") acc[variantId].reserved += 1;
         else if (unit.status === "sold") acc[variantId].sold += 1;
         else if (["defective", "returned_defective"].includes(unit.status))
           acc[variantId].defective += 1;
@@ -367,6 +369,7 @@ export default function InventoryConfig() {
         .map((variant) => {
           const counts = unitCountsByVariant[variant.id] || {
             available: 0,
+            reserved: 0,
             sold: 0,
             defective: 0,
             inRepair: 0,
@@ -377,12 +380,16 @@ export default function InventoryConfig() {
           return {
             ...variant,
             unitCounts: counts,
+            // Las reservas mantienen el stock de la variante y solo apartan la unidad.
+            // Por eso también cuentan para conciliar el stock serializado.
+            accountedUnits: counts.available + counts.reserved,
             missingUnits: Math.max(
-              Number(variant.stock || 0) - counts.available,
+              Number(variant.stock || 0) -
+                (counts.available + counts.reserved),
               0,
             ),
             excessUnits: Math.max(
-              counts.available - Number(variant.stock || 0),
+              counts.available + counts.reserved - Number(variant.stock || 0),
               0,
             ),
           };
@@ -422,6 +429,7 @@ export default function InventoryConfig() {
         unitCounts: unitCountsByVariant[variant.id] || {
           total: 0,
           available: 0,
+          reserved: 0,
           sold: 0,
           defective: 0,
           inRepair: 0,
@@ -838,7 +846,7 @@ export default function InventoryConfig() {
                     </TableHead>
                     <TableHead className="text-right">Stock actual</TableHead>
                     <TableHead className="text-right">
-                      Unidades disponibles
+                      Unidades contabilizadas
                     </TableHead>
                     <TableHead className="text-right">
                       Faltan seriales
@@ -874,7 +882,7 @@ export default function InventoryConfig() {
                         {Number(variant.stock || 0)}
                       </TableCell>
                       <TableCell className="text-right">
-                        {variant.unitCounts.available}
+                        {variant.accountedUnits}
                       </TableCell>
                       <TableCell className="text-right">
                         {variant.missingUnits}
