@@ -243,6 +243,8 @@ export function SalesList() {
     const [warrantySettlementAccountId, setWarrantySettlementAccountId] = useState("");
     const [warrantySettlementMethodId, setWarrantySettlementMethodId] = useState("");
     const [warrantySettlementInstallments, setWarrantySettlementInstallments] = useState("");
+    const [warrantySettlementMode, setWarrantySettlementMode] = useState("none");
+    const [warrantyManualAmountArs, setWarrantyManualAmountArs] = useState("");
     const [warrantiesBySale, setWarrantiesBySale] = useState({});
     const selectedWarrantyItem = useMemo(
         () =>
@@ -313,6 +315,7 @@ export function SalesList() {
                 originalTotalUsd: 0,
                 replacementTotalUsd: 0,
                 differenceUsd: 0,
+                differenceArs: 0,
                 storeCreditUsd: 0,
             };
         }
@@ -328,14 +331,18 @@ export function SalesList() {
             0,
         );
         const differenceUsd = Number((replacementTotalUsd - originalTotalUsd).toFixed(2));
+        const differenceArs = fxRate
+            ? Number((differenceUsd * Number(fxRate)).toFixed(2))
+            : 0;
 
         return {
             originalTotalUsd,
             replacementTotalUsd,
             differenceUsd,
+            differenceArs,
             storeCreditUsd: differenceUsd < 0 ? Math.abs(differenceUsd) : 0,
         };
-    }, [replacementRowsDetailed, selectedWarrantyItem]);
+    }, [replacementRowsDetailed, selectedWarrantyItem, fxRate]);
     const selectedSettlementAccount = useMemo(
         () =>
             displayAccounts.find(
@@ -577,7 +584,7 @@ export function SalesList() {
                 const { data: warrantiesData, error: warrantiesError } = await supabase
                     .from("warranty_exchanges")
                     .select(
-                        "id, sale_id, sale_item_id, original_imei, replacement_imei, quantity, returned_stock_bucket, reason, notes, created_at, price_difference_usd, settlement_type, settlement_currency, settlement_amount, settlement_installments, settlement_multiplier, store_credit_usd, store_credit_amount_ars, settlement_method:payment_methods!warranty_exchanges_settlement_payment_method_id_fkey(id, name), original_variant:product_variants!warranty_exchanges_original_variant_id_fkey(id, variant_name, color, products(name)), replacement_variant:product_variants!warranty_exchanges_replacement_variant_id_fkey(id, variant_name, color, products(name))",
+                        "id, sale_id, sale_item_id, original_imei, replacement_imei, quantity, returned_stock_bucket, reason, notes, created_at, price_difference_usd, settlement_type, settlement_currency, settlement_amount, settlement_installments, settlement_multiplier, store_credit_usd, store_credit_amount_ars, warranty_sale_id, settlement_method:payment_methods!warranty_exchanges_settlement_payment_method_id_fkey(id, name), original_variant:product_variants!warranty_exchanges_original_variant_id_fkey(id, variant_name, color, products(name)), replacement_variant:product_variants!warranty_exchanges_replacement_variant_id_fkey(id, variant_name, color, products(name))",
                     )
                     .in("sale_id", saleIds)
                     .order("created_at", { ascending: false });
@@ -964,6 +971,8 @@ export function SalesList() {
         setWarrantySettlementAccountId("");
         setWarrantySettlementMethodId("");
         setWarrantySettlementInstallments("");
+        setWarrantySettlementMode("none");
+        setWarrantyManualAmountArs("");
     };
 
     const createWarrantyReplacementRow = (variantId = "", quantity = 1) => ({
@@ -1098,6 +1107,8 @@ export function SalesList() {
             setWarrantySettlementAccountId("");
             setWarrantySettlementMethodId("");
             setWarrantySettlementInstallments("");
+            setWarrantySettlementMode("none");
+            setWarrantyManualAmountArs("");
             setWarrantyOpen(true);
         } catch (error) {
             toast.error("No se pudo preparar el flujo de garantia", {
@@ -1188,30 +1199,19 @@ export function SalesList() {
             });
         }
 
-        if (warrantyPriceDiff.differenceUsd > 0.009) {
-            if (!warrantySettlementMethodId) {
-                toast.error("Selecciona el metodo para liquidar la diferencia");
-                return;
-            }
-
-            if (
-                settlementInstallmentOptions.length > 0 &&
-                !warrantySettlementInstallments
-            ) {
-                toast.error("Selecciona las cuotas para liquidar la diferencia");
-                return;
-            }
-
-            if (!warrantySettlementAccountId) {
-                toast.error("Selecciona la cuenta para liquidar la diferencia");
-                return;
-            }
-
-            if (!warrantySettlementPreview) {
-                toast.error("No se pudo calcular la diferencia con la cuenta elegida");
-                return;
+        if (Math.abs(warrantyPriceDiff.differenceUsd) > 0.009) {
+            if (warrantySettlementMode === "none") {
+                // Direct exchange: no further validation needed
+            } else if (warrantySettlementMode === "store_credit") {
+                // Store credit: will create pending sale with payout
+            } else if (warrantySettlementMode === "customer_payment") {
+                // Customer pays: will create pending sale with collection
             }
         }
+
+        const manualAmount = warrantyManualAmountArs
+            ? Number(warrantyManualAmountArs)
+            : null;
 
         try {
             setWarrantyProcessing(true);
@@ -1228,22 +1228,16 @@ export function SalesList() {
                 })),
                 p_reason: warrantyReason.trim(),
                 p_notes: warrantyNotes.trim() || null,
-                p_settlement_account_id: warrantySettlementAccountId
-                    ? Number(warrantySettlementAccountId)
-                    : null,
-                p_settlement_payment_method_id: warrantySettlementMethodId
-                    ? Number(warrantySettlementMethodId)
-                    : null,
-                p_settlement_installments: warrantySettlementInstallments
-                    ? Number(warrantySettlementInstallments)
-                    : null,
-                p_settlement_multiplier: settlementMultiplier || 1,
-                p_settlement_currency: warrantySettlementPreview?.currency || null,
-                p_settlement_amount: warrantySettlementPreview?.amount || null,
-                p_settlement_amount_ars:
-                    warrantySettlementPreview?.amount_ars ?? null,
-                p_settlement_fx_rate_used:
-                    warrantySettlementPreview?.fx_rate_used ?? null,
+                p_settlement_account_id: null,
+                p_settlement_payment_method_id: null,
+                p_settlement_installments: null,
+                p_settlement_multiplier: null,
+                p_settlement_currency: null,
+                p_settlement_amount: null,
+                p_settlement_amount_ars: null,
+                p_settlement_fx_rate_used: fxRate || null,
+                p_settlement_mode: warrantySettlementMode,
+                p_manual_amount_ars: manualAmount,
             });
 
             if (error) throw error;
@@ -1658,13 +1652,14 @@ export function SalesList() {
                                             {Math.abs(Number(warranty.price_difference_usd || 0)) > 0.009 && (
                                                 <p>
                                                     <strong>
-                                                        {warranty.settlement_type === "customer_refund"
-                                                            ? "Reintegro"
-                                                            : "Diferencia cobrada"}
-                                                        :
+                                                        {warranty.settlement_type === "store_credit"
+                                                            ? "Saldo a favor:"
+                                                            : warranty.settlement_type === "customer_payment"
+                                                                ? "Diferencia cobrada:"
+                                                                : "Diferencia:"}
                                                     </strong>{" "}
-                                                    {warranty.settlement_currency}{" "}
-                                                    {Number(warranty.settlement_amount || 0).toLocaleString(
+                                                    {warranty.settlement_currency || "USD"}{" "}
+                                                    {Number(warranty.settlement_amount || warranty.store_credit_usd || Math.abs(warranty.price_difference_usd || 0)).toLocaleString(
                                                         "es-AR",
                                                         {
                                                             minimumFractionDigits: 2,
@@ -1672,6 +1667,19 @@ export function SalesList() {
                                                         },
                                                     )}{" "}
                                                     ({Number(warranty.price_difference_usd || 0).toFixed(2)} USD)
+                                                    {warranty.settlement_type === "none" && (
+                                                        <span className="text-xs text-muted-foreground"> — Cambio directo</span>
+                                                    )}
+                                                </p>
+                                            )}
+                                            {warranty.settlement_type === "none" && Math.abs(Number(warranty.price_difference_usd || 0)) > 0.009 && warranty.price_difference_usd < 0 && (
+                                                <p className="text-xs text-sky-700 dark:text-sky-300">
+                                                    COGS de venta original ajustado
+                                                </p>
+                                            )}
+                                            {warranty.warranty_sale_id && (
+                                                <p>
+                                                    <strong>Venta pendiente:</strong> #{warranty.warranty_sale_id}
                                                 </p>
                                             )}
                                             {warranty.settlement_method?.name && (
@@ -2175,13 +2183,7 @@ export function SalesList() {
                                             : "text-muted-foreground"
                                 }
                             >
-                                <strong>
-                                    {warrantyPriceDiff.differenceUsd > 0
-                                        ? "Cliente paga diferencia:"
-                                        : warrantyPriceDiff.differenceUsd < 0
-                                            ? "Credito a favor proxima compra:"
-                                            : "Sin diferencia de precio:"}
-                                </strong>{" "}
+                                <strong>Diferencia:</strong>{" "}
                                 USD{" "}
                                 {Math.abs(
                                     Number(warrantyPriceDiff.differenceUsd || 0),
@@ -2189,173 +2191,158 @@ export function SalesList() {
                                     minimumFractionDigits: 2,
                                     maximumFractionDigits: 2,
                                 })}
+                                {fxRate && Math.abs(warrantyPriceDiff.differenceUsd) > 0.009 && (
+                                    <span className="text-xs">
+                                        {" "}(${Math.abs(warrantyPriceDiff.differenceArs || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ARS)
+                                    </span>
+                                )}
                             </p>
                         </div>
 
-                        {warrantyPriceDiff.differenceUsd > 0.009 && (
-                            <div className="space-y-4 rounded-md border border-dashed p-4">
+                        {Math.abs(warrantyPriceDiff.differenceUsd) > 0.009 && (
+                            <div className="space-y-3">
+                                <Label>Tipo de liquidacion</Label>
                                 <div className="space-y-2">
-                                    <Label>Metodo para la diferencia</Label>
-                                    <Select
-                                        value={warrantySettlementMethodId}
-                                        onValueChange={(value) => {
-                                            setWarrantySettlementMethodId(value);
-                                            setWarrantySettlementInstallments("");
-                                            const nextMethod = paymentMethods.find(
-                                                (method) =>
-                                                    String(method.id) === String(value),
-                                            );
-                                            const currency = getPaymentDisplayCurrency(
-                                                nextMethod?.name,
-                                            );
-                                            const nextAccounts = accounts.filter(
-                                                (account) => account.currency === currency,
-                                            );
-                                            if (nextAccounts.length === 1) {
-                                                setWarrantySettlementAccountId(
-                                                    String(nextAccounts[0].id),
-                                                );
-                                            } else {
-                                                setWarrantySettlementAccountId("");
-                                            }
-                                        }}
+                                    <label
+                                        className={`flex items-start gap-3 p-3 border rounded-lg cursor-pointer transition ${
+                                            warrantySettlementMode === "none"
+                                                ? "border-primary bg-primary/5"
+                                                : "hover:bg-muted"
+                                        }`}
                                     >
-                                        <SelectTrigger>
-                                            <SelectValue placeholder="Seleccionar metodo" />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            {paymentMethods.map((method) => (
-                                                <SelectItem
-                                                    key={method.id}
-                                                    value={String(method.id)}
-                                                >
-                                                    {method.name}
-                                                </SelectItem>
-                                            ))}
-                                        </SelectContent>
-                                    </Select>
-                                </div>
+                                        <input
+                                            type="radio"
+                                            name="settlement_mode"
+                                            value="none"
+                                            checked={warrantySettlementMode === "none"}
+                                            onChange={() => setWarrantySettlementMode("none")}
+                                            className="mt-0.5 h-4 w-4"
+                                        />
+                                        <div>
+                                            <div className="font-semibold text-sm">Cambio directo</div>
+                                            <div className="text-xs text-muted-foreground">
+                                                Sin movimiento de caja. La empresa{" "}
+                                                {warrantyPriceDiff.differenceUsd < 0 ? "absorbe la ganancia" : "absorbe la perdida"}.
+                                            </div>
+                                        </div>
+                                    </label>
 
-                                {settlementInstallmentOptions.length > 0 && (
-                                    <div className="space-y-2">
-                                        <Label>Cuotas</Label>
-                                        <Select
-                                            value={warrantySettlementInstallments}
-                                            onValueChange={setWarrantySettlementInstallments}
+                                    {warrantyPriceDiff.differenceUsd < -0.009 && (
+                                        <label
+                                            className={`flex items-start gap-3 p-3 border rounded-lg cursor-pointer transition ${
+                                                warrantySettlementMode === "store_credit"
+                                                    ? "border-primary bg-primary/5"
+                                                    : "hover:bg-muted"
+                                            }`}
                                         >
-                                            <SelectTrigger>
-                                                <SelectValue placeholder="Seleccionar cuotas" />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                {settlementInstallmentOptions.map((inst) => (
-                                                    <SelectItem
-                                                        key={inst.id}
-                                                        value={String(inst.installments)}
-                                                    >
-                                                        {inst.installments} cuotas
-                                                    </SelectItem>
-                                                ))}
-                                            </SelectContent>
-                                        </Select>
-                                    </div>
-                                )}
+                                            <input
+                                                type="radio"
+                                                name="settlement_mode"
+                                                value="store_credit"
+                                                checked={warrantySettlementMode === "store_credit"}
+                                                onChange={() => setWarrantySettlementMode("store_credit")}
+                                                className="mt-0.5 h-4 w-4"
+                                            />
+                                            <div>
+                                                <div className="font-semibold text-sm">Saldo a favor del cliente</div>
+                                                <div className="text-xs text-muted-foreground">
+                                                    Se crea venta pendiente. El cliente cobra desde caja.
+                                                </div>
+                                            </div>
+                                        </label>
+                                    )}
 
-                                <div className="space-y-2">
-                                    <Label>
-                                        Cuenta donde ingresa la diferencia
-                                    </Label>
-                                    <Select
-                                        value={warrantySettlementAccountId}
-                                        onValueChange={setWarrantySettlementAccountId}
-                                    >
-                                        <SelectTrigger>
-                                            <SelectValue placeholder="Seleccionar cuenta" />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            {settlementAccounts.map((account) => (
-                                                <SelectItem
-                                                    key={account.id}
-                                                    value={String(account.id)}
-                                                >
-                                                    {account.name} ({account.currency})
-                                                </SelectItem>
-                                            ))}
-                                        </SelectContent>
-                                    </Select>
+                                    {warrantyPriceDiff.differenceUsd > 0.009 && (
+                                        <label
+                                            className={`flex items-start gap-3 p-3 border rounded-lg cursor-pointer transition ${
+                                                warrantySettlementMode === "customer_payment"
+                                                    ? "border-primary bg-primary/5"
+                                                    : "hover:bg-muted"
+                                            }`}
+                                        >
+                                            <input
+                                                type="radio"
+                                                name="settlement_mode"
+                                                value="customer_payment"
+                                                checked={warrantySettlementMode === "customer_payment"}
+                                                onChange={() => setWarrantySettlementMode("customer_payment")}
+                                                className="mt-0.5 h-4 w-4"
+                                            />
+                                            <div>
+                                                <div className="font-semibold text-sm">Cobrar diferencia</div>
+                                                <div className="text-xs text-muted-foreground">
+                                                    Se crea venta pendiente. El cliente paga desde caja.
+                                                </div>
+                                            </div>
+                                        </label>
+                                    )}
                                 </div>
+                            </div>
+                        )}
 
-                                {selectedSettlementAccount && (
-                                    <div className="rounded-md bg-muted/40 p-3 text-sm">
-                                        {warrantySettlementPreview ? (
-                                            <>
-                                                <p>
-                                                    <strong>
-                                                        Cobro estimado:
-                                                    </strong>{" "}
-                                                    {warrantySettlementPreview.currency}{" "}
-                                                    {Number(
-                                                        warrantySettlementPreview.amount || 0,
-                                                    ).toLocaleString("es-AR", {
-                                                        minimumFractionDigits: 2,
-                                                        maximumFractionDigits: 2,
-                                                    })}
-                                                </p>
-                                                {settlementMultiplier > 1 && (
-                                                    <p className="text-xs text-muted-foreground">
-                                                        Multiplicador aplicado: x
-                                                        {Number(settlementMultiplier).toFixed(2)}
-                                                    </p>
-                                                )}
-                                                {warrantySettlementInstallments && (
-                                                    <p className="text-xs text-muted-foreground">
-                                                        Cuotas: {warrantySettlementInstallments}
-                                                    </p>
-                                                )}
-                                                {warrantySettlementPreview.amount_ars != null && (
-                                                    <p className="text-xs text-muted-foreground">
-                                                        Equivalente ARS: $
-                                                        {Number(
-                                                            warrantySettlementPreview.amount_ars,
-                                                        ).toLocaleString("es-AR", {
-                                                            minimumFractionDigits: 2,
-                                                            maximumFractionDigits: 2,
-                                                        })}
-                                                    </p>
-                                                )}
-                                            </>
-                                        ) : (
-                                            <p className="text-xs text-muted-foreground">
-                                                No se pudo calcular la diferencia para la cuenta elegida.
-                                            </p>
-                                        )}
-                                    </div>
+                        {warrantySettlementMode === "none" && Math.abs(warrantyPriceDiff.differenceUsd) > 0.009 && (
+                            <div className="rounded-md border border-dashed p-3 text-sm">
+                                {warrantyPriceDiff.differenceUsd < -0.009 ? (
+                                    <p className="text-sky-700 dark:text-sky-300">
+                                        <strong>Cambio directo:</strong> El producto de reemplazo tiene un precio de venta ${Math.abs(warrantyPriceDiff.differenceUsd).toFixed(2)} USD menor. El costo (COGS) de la venta original se actualizará al costo del producto entregado.
+                                    </p>
+                                ) : (
+                                    <p className="text-amber-700 dark:text-amber-300">
+                                        <strong>Cambio directo:</strong> El producto de reemplazo tiene un precio de venta ${warrantyPriceDiff.differenceUsd.toFixed(2)} USD mayor. La empresa absorbe la diferencia.
+                                    </p>
                                 )}
                             </div>
                         )}
 
-                        {warrantyPriceDiff.storeCreditUsd > 0.009 && (
-                            <div className="rounded-md border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-100">
-                                <p>
-                                    <strong>Credito a favor para proxima compra:</strong> USD{" "}
-                                    {Number(warrantyPriceDiff.storeCreditUsd || 0).toLocaleString(
-                                        "es-AR",
-                                        {
-                                            minimumFractionDigits: 2,
-                                            maximumFractionDigits: 2,
-                                        },
-                                    )}
+                        {warrantySettlementMode === "store_credit" && (
+                            <div className="space-y-3 rounded-md border border-dashed border-sky-200 bg-sky-50/50 p-4 dark:border-sky-900 dark:bg-sky-950/20">
+                                <p className="text-sm text-sky-800 dark:text-sky-200">
+                                    <strong>Saldo a favor del cliente:</strong> se creará una venta pendiente de tipo "Garantía" que el cliente podrá cobrar desde caja.
                                 </p>
-                                {fxRate && (
-                                    <p className="text-xs text-sky-800/80 dark:text-sky-200/80">
-                                        Equivalente estimado ARS: ${" "}
-                                        {Number(
-                                            warrantyPriceDiff.storeCreditUsd * Number(fxRate),
-                                        ).toLocaleString("es-AR", {
-                                            minimumFractionDigits: 2,
-                                            maximumFractionDigits: 2,
-                                        })}
+                                <div className="space-y-2">
+                                    <Label>Monto a acreditar (ARS)</Label>
+                                    <Input
+                                        type="number"
+                                        min="0"
+                                        step="0.01"
+                                        placeholder={warrantyPriceDiff.differenceArs
+                                            ? String(Math.abs(warrantyPriceDiff.differenceArs))
+                                            : "0"
+                                        }
+                                        value={warrantyManualAmountArs}
+                                        onChange={(e) => setWarrantyManualAmountArs(e.target.value)}
+                                    />
+                                    <p className="text-xs text-muted-foreground">
+                                        Calculado: ${Math.abs(warrantyPriceDiff.differenceArs || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ARS
+                                        {fxRate && ` (USD ${Math.abs(warrantyPriceDiff.differenceUsd).toFixed(2)} × $${Number(fxRate).toLocaleString("es-AR")})`}
                                     </p>
-                                )}
+                                </div>
+                            </div>
+                        )}
+
+                        {warrantySettlementMode === "customer_payment" && (
+                            <div className="space-y-3 rounded-md border border-dashed border-amber-200 bg-amber-50/50 p-4 dark:border-amber-900 dark:bg-amber-950/20">
+                                <p className="text-sm text-amber-800 dark:text-amber-200">
+                                    <strong>Cobro de diferencia:</strong> se creará una venta pendiente de tipo "Garantía" que se cobrará desde caja.
+                                </p>
+                                <div className="space-y-2">
+                                    <Label>Monto a cobrar (ARS)</Label>
+                                    <Input
+                                        type="number"
+                                        min="0"
+                                        step="0.01"
+                                        placeholder={warrantyPriceDiff.differenceArs
+                                            ? String(Math.abs(warrantyPriceDiff.differenceArs))
+                                            : "0"
+                                        }
+                                        value={warrantyManualAmountArs}
+                                        onChange={(e) => setWarrantyManualAmountArs(e.target.value)}
+                                    />
+                                    <p className="text-xs text-muted-foreground">
+                                        Calculado: ${Math.abs(warrantyPriceDiff.differenceArs || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ARS
+                                        {fxRate && ` (USD ${Math.abs(warrantyPriceDiff.differenceUsd).toFixed(2)} × $${Number(fxRate).toLocaleString("es-AR")})`}
+                                    </p>
+                                </div>
                             </div>
                         )}
 

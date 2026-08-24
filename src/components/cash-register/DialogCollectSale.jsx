@@ -421,7 +421,7 @@ export default function DialogCollectSale({ open, onOpenChange, sale, onConfirm,
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <IconCoin className="h-5 w-5 text-primary" />
-            {sale?.sale_type === "canje" ? "Cobrar Canje" : "Cobrar Venta Pendiente"}
+            {sale?.sale_type === "canje" ? "Cobrar Canje" : sale?.sale_type === "warranty" ? "Cobrar Garantía" : "Cobrar Venta Pendiente"}
           </DialogTitle>
           <DialogDescription>
             Configurá los pagos y confirmá el cobro.
@@ -435,9 +435,9 @@ export default function DialogCollectSale({ open, onOpenChange, sale, onConfirm,
               <span className="text-muted-foreground">Cliente:</span>
               <span className="font-medium">{(sale.customers?.name || "Sin cliente").toUpperCase()}{sale.customers?.last_name && ` ${sale.customers.last_name.toUpperCase()}`}</span>
             </div>
-            {sale?.sale_type === "canje" && sale?.trade_in_data && (
+            {(sale?.sale_type === "canje" || sale?.sale_type === "warranty") && sale?.trade_in_data && (
               <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Canje:</span>
+                <span className="text-muted-foreground">{sale?.sale_type === "canje" ? "Canje:" : "Garantía:"}</span>
                 <span className="font-medium text-green-600">
                   {sale.trade_in_data.product_name} {sale.trade_in_data.variant_name}
                   {sale.trade_in_data.imei && ` (${sale.trade_in_data.imei})`}
@@ -775,7 +775,7 @@ export default function DialogCollectSale({ open, onOpenChange, sale, onConfirm,
 
             {tradeInCredit > 0 && (
               <>
-                <div className="text-muted-foreground">Crédito canje:</div>
+                <div className="text-muted-foreground">{sale?.sale_type === "warranty" ? "Crédito garantía:" : "Crédito canje:"}</div>
                 <div className="text-right text-green-600 font-semibold">- {formatARS(tradeInCredit)}</div>
               </>
             )}

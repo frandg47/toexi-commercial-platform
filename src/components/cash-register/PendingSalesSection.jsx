@@ -51,6 +51,7 @@ export default function PendingSalesSection({ pendingSales, onCollect, loading, 
 
   const getTypeLabel = (sale) => {
     if (sale.sale_type === "canje") return "Canje";
+    if (sale.sale_type === "warranty") return "Garantía";
     const currency = sale.currency || "ARS";
     if (currency === "USD") return "Compra USD";
     if (currency === "USDT") return "Compra USDT";
@@ -59,12 +60,19 @@ export default function PendingSalesSection({ pendingSales, onCollect, loading, 
 
   const getTypeBadgeClass = (sale) => {
     if (sale.sale_type === "canje") return "bg-purple-100 text-purple-800 border-purple-300 dark:bg-purple-950/50 dark:text-purple-200 dark:border-purple-800";
+    if (sale.sale_type === "warranty") return "bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/50 dark:text-amber-200 dark:border-amber-800";
     return "";
   };
 
   const getTradeInCredit = (sale) => {
-    if (!sale || sale.sale_type !== "canje" || !sale.trade_in_data) return 0;
-    return Number(sale.trade_in_data.amount_ars || 0);
+    if (!sale) return 0;
+    if (sale.sale_type === "canje" && sale.trade_in_data) {
+      return Number(sale.trade_in_data.amount_ars || 0);
+    }
+    if (sale.sale_type === "warranty" && sale.trade_in_data) {
+      return Number(sale.trade_in_data.amount_ars || 0);
+    }
+    return 0;
   };
 
   const hasSales = pendingSales && pendingSales.length > 0;
@@ -134,9 +142,9 @@ export default function PendingSalesSection({ pendingSales, onCollect, loading, 
                       </TableCell>
                       <TableCell className="text-sm font-medium">
                         <div>{formatCurrency(sale.total_ars || sale.total, sale.currency || "ARS")}</div>
-                        {sale.sale_type === "canje" && getTradeInCredit(sale) > 0 && (
+                        {(sale.sale_type === "canje" || sale.sale_type === "warranty") && getTradeInCredit(sale) > 0 && (
                           <div className="text-xs text-green-600">
-                            Canje: -{formatCurrency(getTradeInCredit(sale))}
+                            {sale.sale_type === "canje" ? "Canje" : "Garantía"}: -{formatCurrency(getTradeInCredit(sale))}
                           </div>
                         )}
                       </TableCell>
