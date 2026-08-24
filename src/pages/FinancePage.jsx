@@ -92,10 +92,6 @@ const isMovementPendingAccreditation = (movement) =>
   movement?.available_on &&
   movement.available_on > todayDateKey();
 
-const isCardPaymentName = (name) => {
-  const value = String(name || "").toLowerCase();
-  return value.includes("tarjeta") || value.includes("card") || value.includes("posnet") || value.includes("visa") || value.includes("master");
-};
 
 export default function FinancePage() {
   const { role } = useAuth();
@@ -103,7 +99,6 @@ export default function FinancePage() {
   const [loading, setLoading] = useState(false);
   const [monthlyNetIncomeLoading, setMonthlyNetIncomeLoading] = useState(false);
   const [accounts, setAccounts] = useState([]);
-  const [cardAccountIds, setCardAccountIds] = useState(new Set());
   const [balanceMovementsAll, setBalanceMovementsAll] = useState([]);
   const [balanceMovementsFiltered, setBalanceMovementsFiltered] = useState([]);
   const [fxRate, setFxRate] = useState(null);
@@ -133,14 +128,31 @@ export default function FinancePage() {
 
   const loadStaticData = useCallback(async () => {
     setLoading(true);
+
+    const loadAllMovements = async () => {
+      let all = [];
+      let from = 0;
+      const pageSize = 1000;
+      while (true) {
+        const { data, error } = await supabase
+          .from("account_movements")
+          .select("account_id, type, amount, currency, accreditation_status, available_on, related_table, related_id")
+          .range(from, from + pageSize - 1);
+        if (error) throw error;
+        if (!data?.length) break;
+        all = [...all, ...data];
+        from += pageSize;
+        if (data.length < pageSize) break;
+      }
+      return all;
+    };
+
     const [
       { data: accountsData, error: accountsError },
       { data: blueRateData, error: blueRateError },
       { data: usdtRateData, error: usdtRateError },
       { data: variantsData, error: variantsError },
       { data: aftersalesData, error: aftersalesError },
-      { data: movementsData, error: movementsError },
-      { data: paymentMethodsData, error: paymentMethodsError },
       { data: salesChannelsData, error: salesChannelsError },
       { data: salesYearsData, error: salesYearsError },
     ] = await Promise.all([
@@ -169,15 +181,6 @@ export default function FinancePage() {
         .select(
           "quantity, status, sold_sale_id, include_in_stock_cost_balance, variant:product_variants!aftersales_devices_variant_id_fkey(cost_price_usd)",
         ),
-        supabase
-          .from("account_movements")
-          .select(
-          "account_id, type, amount, currency, accreditation_status, available_on, related_table, related_id",
-        ),
-      supabase
-        .from("payment_methods")
-        .select("name, account_id")
-        .eq("is_active", true),
       supabase
         .from("sales_channels")
         .select("id, name")
@@ -189,6 +192,14 @@ export default function FinancePage() {
         .eq("status", "vendido")
         .is("voided_at", null),
     ]);
+
+    let movementsData = [];
+    let movementsError = null;
+    try {
+      movementsData = await loadAllMovements();
+    } catch (e) {
+      movementsError = e;
+    }
 
     if (accountsError) {
       toast.error("No se pudieron cargar las cuentas", {
@@ -274,21 +285,6 @@ export default function FinancePage() {
         ...movement,
         payment_method_name: paymentNames.get(`${movement.related_table}:${movement.related_id}`) || "",
       })));
-    }
-
-    if (paymentMethodsError) {
-      toast.error("No se pudieron cargar las cuentas de tarjetas", {
-        description: paymentMethodsError.message,
-      });
-      setCardAccountIds(new Set());
-    } else {
-      setCardAccountIds(
-        new Set(
-          (paymentMethodsData || [])
-            .filter((method) => method.account_id && isCardPaymentName(method.name))
-            .map((method) => Number(method.account_id)),
-        ),
-      );
     }
 
     if (salesChannelsError) {
@@ -1090,35 +1086,28 @@ export default function FinancePage() {
       cashUSD: 0,
       transfers: { ARS: 0, USD: 0, USDT: 0 },
       cards: {
-        accredited: { ARS: 0, USD: 0, USDT: 0 },
         pending: { ARS: 0, USD: 0, USDT: 0 },
       },
     };
 
     accountBalancesAll.forEach((account) => {
       if (!account.include_in_balance) return;
-      if (account.is_efectivo && account.currency === "ARS") {
-        result.cashARS += account.current_balance;
-      } else if (account.is_efectivo && account.currency === "USD") {
-        result.cashUSD += account.current_balance;
-      } else if (account.is_caja_virtual) {
+      if (account.is_caja_virtual) {
         result.transfers[account.currency] =
           (result.transfers[account.currency] || 0) + account.current_balance;
-      }
-    });
-
-    // El saldo acreditado sale del saldo neto de las cuentas de tarjeta.
-    accountBalancesAll.forEach((account) => {
-      if (!account.include_in_balance || !cardAccountIds.has(Number(account.id))) return;
-      if (result.cards.accredited[account.currency] !== undefined) {
-        result.cards.accredited[account.currency] += account.current_balance;
+      } else if (account.is_efectivo && !account.is_reference_capital) {
+        console.log("cuenta", account);
+        if (account.currency === "ARS") {
+          result.cashARS += account.current_balance;
+        } else if (account.currency === "USD") {
+          result.cashUSD += account.current_balance;
+        }
       }
     });
 
     balanceMovementsAll.forEach((movement) => {
       if (
         movement.type !== "income" ||
-        !isCardPaymentName(movement.payment_method_name) ||
         !isMovementPendingAccreditation(movement)
       ) return;
       const currency = movement.currency || "ARS";
@@ -1127,7 +1116,7 @@ export default function FinancePage() {
     });
 
     return result;
-  }, [accountBalancesAll, balanceMovementsAll, cardAccountIds]);
+  }, [accountBalancesAll, balanceMovementsAll]);
 
   const convertAmountToUsd = useCallback(
     (amount, currency) => {
@@ -1215,14 +1204,13 @@ export default function FinancePage() {
         </Card>
         <Card className="bg-amber-500">
           <CardHeader>
-            <CardTitle className="text-white">Tarjetas</CardTitle>
+            <CardTitle className="text-white">Pendientes de acreditación</CardTitle>
           </CardHeader>
           <CardContent className="space-y-1 text-white">
-            <div className="text-sm">Acreditado: <b>{formatCurrency(operationalBalances.cards.accredited.ARS, "ARS")}</b></div>
-            <div className="text-sm">Pendiente: <b>{formatCurrency(operationalBalances.cards.pending.ARS, "ARS")}</b></div>
-            {(operationalBalances.cards.accredited.USD || operationalBalances.cards.pending.USD || operationalBalances.cards.accredited.USDT || operationalBalances.cards.pending.USDT) ? (
+            <div className="text-2xl font-semibold">{formatCurrency(operationalBalances.cards.pending.ARS, "ARS")}</div>
+            {(operationalBalances.cards.pending.USD || operationalBalances.cards.pending.USDT) ? (
               <div className="text-xs opacity-90">
-                USD: {formatCurrency(operationalBalances.cards.accredited.USD, "USD")} / {formatCurrency(operationalBalances.cards.pending.USD, "USD")}
+                USD: {formatCurrency(operationalBalances.cards.pending.USD, "USD")} · USDT: {formatCurrency(operationalBalances.cards.pending.USDT, "USDT")}
               </div>
             ) : null}
           </CardContent>

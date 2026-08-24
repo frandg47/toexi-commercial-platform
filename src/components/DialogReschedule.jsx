@@ -16,10 +16,14 @@ import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { toast } from "sonner";
 
+const isCancelled = (lead) => lead?.status === "cancelado";
+
 export default function DialogReschedule({ open, onClose, lead, onSaved }) {
   const [date, setDate] = useState(null);
   const [hour, setHour] = useState("15:00");
   const [saving, setSaving] = useState(false);
+
+  const cancelled = isCancelled(lead);
 
   useEffect(() => {
     if (!lead?.appointment_datetime) return;
@@ -44,22 +48,61 @@ export default function DialogReschedule({ open, onClose, lead, onSaved }) {
         iso = final.toISOString();
       }
 
-      const { error } = await supabase
-        .from("leads")
-        .update({
+      if (cancelled) {
+        const appointmentDate = new Date(iso);
+        const reservationExpires = new Date(
+          appointmentDate.getFullYear(),
+          appointmentDate.getMonth(),
+          appointmentDate.getDate() + 1,
+          0, 0, 0, 0
+        );
+        reservationExpires.setHours(reservationExpires.getHours() + 3);
+
+        const newLead = {
+          referred_by: lead.seller?.id_auth || null,
+          customer_id: lead.customers?.id || null,
+          interested_variants: lead.interested_variants || [],
           appointment_datetime: iso,
+          notes: lead.notes || null,
           status: "pendiente",
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", lead.id);
+          product_status: "en espera",
+          fulfillment_type: lead.fulfillment_type || "stock",
+          reservation_expires_at: lead.fulfillment_type === "stock" ? reservationExpires.toISOString() : null,
+          deposit_paid: false,
+          deposit_amount: 0,
+          deposit_currency: "ARS",
+        };
 
-      if (error) throw error;
+        const { error } = await supabase.from("leads").insert([newLead]);
+        if (error) throw error;
 
-      toast.success("Cita reprogramada");
+        toast.success("Nuevo pedido creado", {
+          description: "Se creó un nuevo pedido con los mismos datos del cancelado.",
+        });
+      } else {
+        const { data, error } = await supabase.rpc("reschedule_order_appointment", {
+          p_lead_id: lead.id,
+          p_new_appointment: iso,
+        });
+
+        if (error) throw error;
+
+        if (data?.has_active_reservation === false) {
+          toast.success("Cita reprogramada", {
+            description:
+              "El pedido no tiene reserva activa. Reservá el producto nuevamente si hace falta.",
+          });
+        } else {
+          toast.success("Cita reprogramada");
+        }
+      }
+
       onSaved?.();
       onClose();
     } catch (e) {
-      toast.error("No se pudo reprogramar", { description: e.message });
+      toast.error(cancelled ? "No se pudo crear el pedido" : "No se pudo reprogramar", {
+        description: e.message,
+      });
     } finally {
       setSaving(false);
     }
@@ -69,7 +112,7 @@ export default function DialogReschedule({ open, onClose, lead, onSaved }) {
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="w-[90vw] sm:max-w-xl md:max-w-2xl max-h-[85svh] overflow-y-auto rounded-2xl p-4 sm:p-6">
         <DialogHeader>
-          <DialogTitle>Reprogramar cita</DialogTitle>
+          <DialogTitle>{cancelled ? "Crear nuevo pedido" : "Reprogramar cita"}</DialogTitle>
         </DialogHeader>
 
         <div className="space-y-4">
@@ -116,7 +159,9 @@ export default function DialogReschedule({ open, onClose, lead, onSaved }) {
           </div>
 
           <p className="text-xs text-muted-foreground">
-            Al guardar se marcará como <strong>pendiente</strong>.
+            {cancelled
+              ? "Se creará un nuevo pedido con los mismos datos del cancelado."
+              : "Al guardar se marcará como pendiente."}
           </p>
         </div>
 
@@ -125,7 +170,9 @@ export default function DialogReschedule({ open, onClose, lead, onSaved }) {
             Cancelar
           </Button>
           <Button onClick={save} disabled={saving || !date || !hour}>
-            {saving ? "Guardando..." : "Guardar"}
+            {saving
+              ? (cancelled ? "Creando..." : "Guardando...")
+              : (cancelled ? "Crear pedido" : "Guardar")}
           </Button>
         </DialogFooter>
       </DialogContent>

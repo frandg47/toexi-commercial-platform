@@ -171,6 +171,9 @@ export default function SheetNewLead({ open, onOpenChange, sellerId }) {
       return;
     }
 
+    const reservationExpiresAt = new Date(selectedDate);
+    reservationExpiresAt.setHours(23, 59, 59, 999);
+
     setLoading(true);
 
     const variantList = selectedVariants.map((v) => ({
@@ -212,7 +215,7 @@ export default function SheetNewLead({ open, onOpenChange, sellerId }) {
         status: "pendiente",
         product_status: productStatus,
         fulfillment_type: fulfillmentType,
-        reservation_expires_at: fulfillmentType === "stock" ? selectedDate.toISOString() : null,
+        reservation_expires_at: fulfillmentType === "stock" ? reservationExpiresAt.toISOString() : null,
         deposit_paid: false,
         deposit_amount: 0,
         deposit_currency: "ARS",
@@ -233,7 +236,7 @@ export default function SheetNewLead({ open, onOpenChange, sellerId }) {
         p_variant_id: Number(reservationVariantId),
         p_inventory_unit_id: selectedReservationUnitId ? Number(selectedReservationUnitId) : null,
         p_quantity: 1,
-        p_expires_at: selectedDate.toISOString(),
+        p_expires_at: reservationExpiresAt.toISOString(),
       });
       if (reservationError) {
         await supabase.from("leads").delete().eq("id", createdLead.id);

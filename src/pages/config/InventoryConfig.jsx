@@ -92,6 +92,9 @@ const EVENT_LABELS = {
   warranty_replacement_delivered: "Reemplazo entregado",
   manual_serial_stock_initialized: "Carga manual de seriales",
   canje_received: "Ingreso por plan canje",
+  order_reserved: "Reserva de pedido",
+  order_reservation_released: "Reserva liberada",
+  order_reservation_expired: "Reserva vencida",
 };
 
 const TRACKING_LABELS = {
@@ -326,7 +329,7 @@ export default function InventoryConfig() {
     const serialUnits = allUnitsForCount.length;
 
     return { variantCount, availableStock, defectiveStock, serialUnits };
-  }, [variants, units]);
+  }, [variants, allUnitsForCount]);
 
   const unitCountsByVariant = useMemo(
     () =>

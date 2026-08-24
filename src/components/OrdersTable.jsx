@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "../lib/supabaseClient";
 import { toast } from "sonner";
 import SheetNewSale from "./SheetNewSale";
@@ -35,8 +35,10 @@ import {
   IconCircleX,
   IconCircleCheck,
   IconCircleDashed,
+  IconDownload,
 } from "@tabler/icons-react";
 import { formatPersonName } from "@/utils/formatName";
+import { generateOrderDepositPDF } from "@/utils/generateOrderDepositPDF";
 import {
   Table,
   TableHeader,
@@ -87,6 +89,7 @@ const OrdersTable = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [nameFilter, setNameFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("todos");
+  const autoCancelRanRef = useRef(false);
   const [dateRange, setDateRange] = useState({
     from: startOfMonth(new Date()),
     to: endOfMonth(new Date()),
@@ -178,6 +181,35 @@ const OrdersTable = () => {
   }, [fetchOrders]);
 
   const handleUpdateStatus = async (id, status) => {
+    if (["cancelado", "sin_exito"].includes(status)) {
+      const lead = orders.find((o) => o.id === id);
+      if (lead?.deposit_paid) {
+        const amountLabel = `${lead.deposit_currency === "USD" ? "USD $" : "$"}${Number(
+          lead.deposit_amount || 0
+        ).toLocaleString("es-AR")}`;
+        const confirmed = window.confirm(
+          `Este pedido tiene una seña pagada de ${amountLabel}. Al ${
+            status === "cancelado" ? "cancelarlo" : "marcarlo sin éxito"
+          }, la seña queda perdida (no se devuelve al cliente). ¿Continuar?`
+        );
+        if (!confirmed) return;
+      }
+
+      const { error } = await supabase.rpc("cancel_lead_order", {
+        p_lead_id: id,
+        p_status: status,
+        p_reason: status === "cancelado" ? "Pedido cancelado" : "Pedido sin exito",
+      });
+
+      if (error) {
+        toast.error("Error actualizando estado", { description: error.message });
+      } else {
+        toast.success("Estado actualizado");
+        fetchOrders(false);
+      }
+      return;
+    }
+
     const { error } = await supabase
       .from("leads")
       .update({ status, updated_at: new Date() })
@@ -186,12 +218,6 @@ const OrdersTable = () => {
     if (error) {
       toast.error("Error actualizando estado");
     } else {
-      if (["cancelado", "sin_exito"].includes(status)) {
-        await supabase.rpc("release_order_reservation", {
-          p_lead_id: id,
-          p_reason: status === "cancelado" ? "Pedido cancelado" : "Pedido sin exito",
-        });
-      }
       toast.success("Estado actualizado");
       fetchOrders(false);
     }
@@ -212,11 +238,15 @@ const OrdersTable = () => {
   };
 
   const autoCancelExpired = async (leads) => {
+    if (autoCancelRanRef.current) return;
+    autoCancelRanRef.current = true;
+
     const today = new Date();
     today.setHours(0, 0, 0, 0); // normalizar a medianoche
 
-    const toCancel = leads.filter((l) => {
+    const candidates = leads.filter((l) => {
       if (l.status !== "pendiente" || !l.appointment_datetime) return false;
+      if (l.deposit_paid) return false; // la seña pagada protege el pedido
 
       const appt = new Date(l.appointment_datetime);
       appt.setHours(0, 0, 0, 0); // ignorar la hora
@@ -224,29 +254,42 @@ const OrdersTable = () => {
       return appt < today;
     });
 
+    if (candidates.length === 0) return;
+
+    // No cancelar pedidos que ya tengan una venta asociada
+    const candidateIds = candidates.map((l) => l.id);
+    const { data: linkedSales } = await supabase
+      .from("sales")
+      .select("lead_id")
+      .in("lead_id", candidateIds)
+      .neq("status", "anulado");
+
+    const withSale = new Set((linkedSales || []).map((s) => s.lead_id));
+    const toCancel = candidates.filter((l) => !withSale.has(l.id));
+
     if (toCancel.length === 0) return;
 
     const ids = toCancel.map((l) => l.id);
 
-    const { error } = await supabase
-      .from("leads")
-      .update({ status: "cancelado", updated_at: new Date().toISOString() })
-      .in("id", ids);
+    const results = await Promise.all(
+      ids.map((id) =>
+        supabase.rpc("cancel_lead_order", {
+          p_lead_id: id,
+          p_status: "cancelado",
+          p_reason: "Cita vencida",
+        })
+      )
+    );
 
-    if (!error) {
-      await Promise.all(
-        ids.map((id) =>
-          supabase.rpc("release_order_reservation", {
-            p_lead_id: id,
-            p_reason: "Cita vencida",
-          })
-        )
-      );
+    const failed = results.filter((r) => r.error);
+    if (failed.length === 0) {
       toast("Citas vencidas canceladas", {
         description: `${ids.length} pedido(s) actualizados`,
       });
-      fetchOrders(false);
+    } else {
+      toast.error("No se pudieron cancelar todas las citas vencidas");
     }
+    fetchOrders(false);
   };
 
   // const kpis = {
@@ -309,6 +352,55 @@ const OrdersTable = () => {
     }
     setDepositLead(lead);
     setDepositOpen(true);
+  };
+
+  const handleDownloadDepositReceipt = async (lead) => {
+    try {
+      const [depositRes, sellerRes, unitRes] = await Promise.all([
+        supabase
+          .from("order_deposits")
+          .select("id, amount, currency, amount_ars, fx_rate_used, reference, status, payment_methods(name)")
+          .eq("lead_id", lead.id)
+          .order("received_at", { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+        lead.seller?.id_auth
+          ? supabase.from("users").select("name, last_name, phone").eq("id_auth", lead.seller.id_auth).maybeSingle()
+          : { data: null },
+        lead.reserved_inventory_unit_id
+          ? supabase.from("inventory_units").select("identifier_value").eq("id", lead.reserved_inventory_unit_id).maybeSingle()
+          : { data: null },
+      ]);
+
+      if (depositRes.error) throw depositRes.error;
+
+      const deposit = depositRes.data;
+      if (!deposit) {
+        toast.error("No se encontró la seña registrada");
+        return;
+      }
+
+      const sellerUser = sellerRes?.data || {};
+      const receipt = {
+        lead: {
+          ...lead,
+          seller: { user: { name: sellerUser.name, last_name: sellerUser.last_name, phone: sellerUser.phone } },
+        },
+        amount: Number(deposit.amount),
+        currency: deposit.currency,
+        amountARS: Number(deposit.amount_ars),
+        rate: deposit.fx_rate_used,
+        methodName: deposit.payment_methods?.name || "",
+        reference: deposit.reference || "",
+        receiptId: deposit.id,
+        reservedIdentifier: unitRes?.data?.identifier_value || "",
+        expiresAt: lead.reservation_expires_at || lead.appointment_datetime,
+      };
+
+      generateOrderDepositPDF(receipt);
+    } catch (e) {
+      toast.error("No se pudo generar el comprobante", { description: e.message });
+    }
   };
 
   return (
@@ -405,7 +497,7 @@ const OrdersTable = () => {
               <TableHead>Interesado en</TableHead>
               <TableHead>Estado</TableHead>
               <TableHead>Seña</TableHead>
-              <TableHead>Producto</TableHead>
+              {/* <TableHead>Producto</TableHead> */}
               <TableHead>Creado</TableHead>
               <TableHead className="w-10 text-center"></TableHead>
             </TableRow>
@@ -529,8 +621,8 @@ const OrdersTable = () => {
                   </TableCell>
 
                   {/* 📦 Estado del Producto */}
-                  <TableCell>
-                    {role === "superadmin" || role === "owner" ? (
+                  {/* <TableCell>
+                    {(role === "superadmin" || role === "owner") ? (
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Badge
@@ -579,7 +671,7 @@ const OrdersTable = () => {
                         {o.product_status === "a_pedido" ? "A pedido" : o.product_status || "en espera"}
                       </Badge>
                     )}
-                  </TableCell>
+                  </TableCell> */}
 
                   <TableCell>{formatDate(o.created_at)}</TableCell>
 
@@ -635,6 +727,14 @@ const OrdersTable = () => {
                                     <IconCash className="mr-2 h-4 w-4" />
                                     Registrar seña
                                   </DropdownMenuItem>
+                                  {o.deposit_paid && (
+                                    <DropdownMenuItem
+                                      onClick={() => handleDownloadDepositReceipt(o)}
+                                    >
+                                      <IconDownload className="mr-2 h-4 w-4" />
+                                      Descargar comprobante
+                                    </DropdownMenuItem>
+                                  )}
                                   <DropdownMenuItem
                                     className="text-red-600"
                                     onClick={() =>
@@ -678,10 +778,11 @@ const OrdersTable = () => {
                             case "cancelado":
                               return (
                                 <DropdownMenuItem
-                                  onClick={() => openReschedule(o)}
+                                  disabled
+                                  className="text-muted-foreground"
                                 >
-                                  <IconCalendarEvent className="mr-2 h-4 w-4" />
-                                  Reprogramar cita
+                                  <IconX className="mr-2 h-4 w-4" />
+                                  Pedido cancelado
                                 </DropdownMenuItem>
                               );
 

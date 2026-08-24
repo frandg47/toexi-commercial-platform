@@ -742,8 +742,6 @@ const buildSelectedVariant = (variant) => ({
       customer_id: selectedCustomer.id,
       seller_id: sellerData?.id_auth ?? null,
       lead_id: lead?.id ?? null,
-      reserved_variant_id: lead?.reserved_variant_id ?? null,
-      reservation_expires_at: lead?.reservation_expires_at ?? null,
       sales_channel_id: selectedChannel ? Number(selectedChannel) : null,
       sales_channel_name: salesChannels.find(ch => String(ch.id) === selectedChannel)?.name,
       total_usd: totalUsdDue,
@@ -775,7 +773,6 @@ const buildSelectedVariant = (variant) => ({
     };
 
     setLoading(true);
-    let reservationReleased = false;
     try {
       const payload = {
         p_customer_id: salePreview.customer_id,
@@ -801,30 +798,8 @@ const buildSelectedVariant = (variant) => ({
         p_total_usd: salePreview.total_usd,
       };
 
-      if (salePreview.lead_id && salePreview.reserved_variant_id) {
-        const { error: releaseError } = await supabase.rpc("release_order_reservation", {
-          p_lead_id: salePreview.lead_id,
-          p_reason: "Preparada para venta",
-        });
-        if (releaseError) throw releaseError;
-        reservationReleased = true;
-      }
-
-      const { data, error } = await supabase.rpc("create_sale_with_imeis", payload);
+      const { error } = await supabase.rpc("create_sale_with_imeis", payload);
       if (error) throw error;
-
-      if (salePreview.lead_id && data?.sale_id) {
-        await Promise.all([
-          supabase.rpc("convert_order_reservation", {
-            p_lead_id: salePreview.lead_id,
-            p_sale_id: data.sale_id,
-          }),
-          supabase.rpc("apply_order_deposits_to_sale", {
-            p_lead_id: salePreview.lead_id,
-            p_sale_id: data.sale_id,
-          }),
-        ]);
-      }
 
       toast.success("Venta pendiente registrada. El cobro se realiza en Caja.");
       onSaleCreated?.();
@@ -832,18 +807,6 @@ const buildSelectedVariant = (variant) => ({
       resetFormData();
       onOpenChange(false);
     } catch (err) {
-      if (reservationReleased && salePreview.lead_id && salePreview.reserved_variant_id) {
-        const reservedVariant = salePreview.variants.find(
-          (variant) => String(variant.variant_id ?? variant.id) === String(salePreview.reserved_variant_id)
-        );
-        await supabase.rpc("reserve_order_stock", {
-          p_lead_id: salePreview.lead_id,
-          p_variant_id: Number(salePreview.reserved_variant_id),
-          p_inventory_unit_id: reservedVariant?.inventory_unit_ids?.[0] || null,
-          p_quantity: 1,
-          p_expires_at: salePreview.reservation_expires_at || null,
-        });
-      }
       console.error("Error al crear venta pendiente:", err);
       toast.error("Error al crear la venta", {
         description: err.message || "Ocurrió un error inesperado",

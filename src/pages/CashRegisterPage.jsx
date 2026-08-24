@@ -146,9 +146,8 @@ export default function CashRegisterPage() {
   // Show toast when another user has an open register
   useEffect(() => {
     if (otherUserOpenRegister && !isOpen) {
-      const email = otherUserOpenRegister.users?.email || "otro usuario";
       toast.warning(
-        `Ya hay una caja abierta por ${email}. Solo puede haber una caja abierta a la vez.`,
+        "Ya hay una caja abierta por otro usuario. Solo puede haber una caja abierta a la vez.",
       );
     }
   }, [otherUserOpenRegister, isOpen]);
@@ -447,7 +446,7 @@ export default function CashRegisterPage() {
         register={currentRegister}
         balance={balance}
         disabled={!!otherUserOpenRegister}
-        disabledReason={otherUserOpenRegister ? `Caja abierta por ${otherUserOpenRegister.users?.email || "otro usuario"}` : undefined}
+        disabledReason={otherUserOpenRegister ? "Caja abierta por otro usuario" : undefined}
         onOpen={() => {
           if (staleOpenRegister) {
             toast.error(
@@ -457,9 +456,8 @@ export default function CashRegisterPage() {
             return;
           }
           if (otherUserOpenRegister) {
-            const email = otherUserOpenRegister.users?.email || "otro usuario";
             toast.error(
-              `Ya hay una caja abierta por ${email}. Solo puede haber una caja abierta a la vez.`,
+              "Ya hay una caja abierta por otro usuario. Solo puede haber una caja abierta a la vez.",
             );
             return;
           }

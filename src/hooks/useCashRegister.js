@@ -304,7 +304,7 @@ export function useCashRegister(userId) {
       // Buscar si hay caja abierta de OTRO usuario
       const { data: otherOpenData } = await supabase
         .from("cash_registers")
-        .select("*, users:user_id(email)")
+        .select("*")
         .eq("status", "open")
         .neq("user_id", userId)
         .maybeSingle();
