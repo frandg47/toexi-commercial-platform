@@ -141,6 +141,8 @@ const ProductsTable = ({ refreshToken = 0, isSellerView = false }) => {
     product: null,
   });
 
+  const [reservedCounts, setReservedCounts] = useState({});
+
   // 🔄 REEMPLAZO 2: Estado para el AlertDialog de eliminación
   const [deleteDialog, setDeleteDialog] = useState({
     open: false,
@@ -485,6 +487,43 @@ const ProductsTable = ({ refreshToken = 0, isSellerView = false }) => {
     isSellerView,
   ]);
 
+  useEffect(() => {
+    if (!products.length) {
+      setReservedCounts({});
+      return;
+    }
+    const variantIds = products.flatMap((p) => (p.variants || []).map((v) => v.id));
+    if (!variantIds.length) {
+      setReservedCounts({});
+      return;
+    }
+    supabase
+      .from("order_reservations")
+      .select("product_variant_id")
+      .in("product_variant_id", variantIds)
+      .eq("status", "active")
+      .then(({ data }) => {
+        const counts = {};
+        for (const r of data || []) {
+          counts[r.product_variant_id] = (counts[r.product_variant_id] || 0) + 1;
+        }
+        setReservedCounts(counts);
+      });
+  }, [products]);
+
+  const getAvailableStock = useCallback(
+    (product) => {
+      const variants = product.variants || [];
+      const totalStock = variants.reduce((sum, v) => sum + (v.stock || 0), 0);
+      const totalReserved = variants.reduce(
+        (sum, v) => sum + (reservedCounts[v.id] || 0),
+        0
+      );
+      return Math.max(0, totalStock - totalReserved);
+    },
+    [reservedCounts]
+  );
+
   const handleRefresh = () => fetchProducts(false);
 
   // 🔄 REEMPLAZO 4: Función para manejar la apertura del diálogo de eliminación
@@ -538,7 +577,7 @@ const ProductsTable = ({ refreshToken = 0, isSellerView = false }) => {
     const compareValues = (a, b, col) => {
       if (col === "name") return a.name.localeCompare(b.name) * dir;
       if (col === "brand") return a.brandName.localeCompare(b.brandName) * dir;
-      if (col === "stock") return (Number(a.stock) - Number(b.stock)) * dir;
+      if (col === "stock") return (getAvailableStock(a) - getAvailableStock(b)) * dir;
       if (col === "commission") {
         const va = a.commissionPct ?? a.commissionFixed ?? 0;
         const vb = b.commissionPct ?? b.commissionFixed ?? 0;
@@ -552,7 +591,7 @@ const ProductsTable = ({ refreshToken = 0, isSellerView = false }) => {
       if (sortBy) return compareValues(a, b, sortBy);
       return a.name.localeCompare(b.name);
     });
-  }, [products, sortBy, sortDir]);
+  }, [products, sortBy, sortDir, reservedCounts]);
 
   const getRateBadge = () => {
     if (rateDiff === null) return null;
@@ -765,12 +804,12 @@ const ProductsTable = ({ refreshToken = 0, isSellerView = false }) => {
                   <div className="mt-2 flex items-center justify-between text-xs">
                     <span className="text-muted-foreground">
                       Stock:{" "}
-                      {p.stock === 0 && p.allowBackorder ? (
+                      {getAvailableStock(p) === 0 && p.allowBackorder ? (
                         <span className="text-amber-600 font-medium">
                           Pedido {p.leadTimeLabel}
                         </span>
                       ) : (
-                        p.stock
+                        getAvailableStock(p)
                       )}
                     </span>
 
@@ -946,7 +985,7 @@ const ProductsTable = ({ refreshToken = 0, isSellerView = false }) => {
                     </TableCell>
 
                     <TableCell>
-                      {p.stock === 0 && p.allowBackorder ? (
+                      {getAvailableStock(p) === 0 && p.allowBackorder ? (
                         <div className="flex flex-col leading-tight">
                           <span className="font-medium text-amber-600">
                             Pedido
@@ -956,7 +995,7 @@ const ProductsTable = ({ refreshToken = 0, isSellerView = false }) => {
                           </span>
                         </div>
                       ) : (
-                        p.stock
+                        getAvailableStock(p)
                       )}
                     </TableCell>
 

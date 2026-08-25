@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import { supabase } from "@/lib/supabaseClient";
 import { Button } from "@/components/ui/button";
 import { IconCoin, IconFileTypePdf, IconInfoCircle } from "@tabler/icons-react";
 import {
@@ -103,6 +104,32 @@ export default function ProductDetailDialog({
   }, [activeTab, grouped]);
   const selectedGroup = grouped.find((g) => g.key === activeTab);
   const firstVariant = selectedGroup?.variants[0] || realVariants[0];
+
+  // 🔹 Reservas activas por variante (stock disponible)
+  const [reservedCounts, setReservedCounts] = useState({});
+
+  useEffect(() => {
+    if (!open || !realVariants.length) {
+      setReservedCounts({});
+      return;
+    }
+
+    const variantIds = realVariants.map((v) => v.id);
+    supabase
+      .from("order_reservations")
+      .select("product_variant_id")
+      .in("product_variant_id", variantIds)
+      .eq("status", "active")
+      .then(({ data }) => {
+        const counts = {};
+        for (const r of data || []) {
+          counts[r.product_variant_id] = (counts[r.product_variant_id] || 0) + 1;
+        }
+        setReservedCounts(counts);
+      });
+  }, [open, realVariants]);
+
+  const availableStock = (v) => Math.max(0, (v.stock || 0) - (reservedCounts[v.id] || 0));
 
   // 🔹 Colores disponibles
   const colors = selectedGroup
@@ -277,10 +304,10 @@ export default function ProductDetailDialog({
                   <span className="font-semibold">Stock:</span>{" "}
                   <Badge
                     variant={
-                      (selectedGroup?.variants?.reduce((sum, v) => sum + Number(v.stock || 0), 0) ?? 0) === 0 ? "destructive" : "secondary"
+                      (selectedGroup?.variants?.reduce((sum, v) => sum + availableStock(v), 0) ?? 0) === 0 ? "destructive" : "secondary"
                     }
                   >
-                    {selectedGroup?.variants?.reduce((sum, v) => sum + Number(v.stock || 0), 0) ?? 0}
+                    {selectedGroup?.variants?.reduce((sum, v) => sum + availableStock(v), 0) ?? 0}
                   </Badge>
                 </p>
               </div>
@@ -342,7 +369,7 @@ export default function ProductDetailDialog({
                   {selectedGroup.variants.map((v) => (
                     <div
                       key={v.id}
-                      className={`relative rounded-xl border bg-card p-4 shadow-sm hover:shadow-md transition-all ${v.stock === 0
+                      className={`relative rounded-xl border bg-card p-4 shadow-sm hover:shadow-md transition-all ${availableStock(v) === 0
                         ? "opacity-60 border-destructive/60"
                         : "hover:border-primary/70"
                         }`}
@@ -366,13 +393,13 @@ export default function ProductDetailDialog({
 
                         <div className="flex justify-between text-sm">
                           <span className="text-muted-foreground">Stock:</span>
-                          <span className={`font-medium ${v.stock === 0 ? "text-destructive" : "text-green-600"}`}>
-                            {v.stock}
+                          <span className={`font-medium ${availableStock(v) === 0 ? "text-destructive" : "text-green-600"}`}>
+                            {availableStock(v)}
                           </span>
                         </div>
                       </div>
 
-                      {v.stock === 0 && (
+                      {availableStock(v) === 0 && (
                         <span className="absolute top-2 right-2 text-[10px] bg-destructive px-2 py-0.5 rounded-md uppercase shadow-sm">
                           SIN STOCK
                         </span>
