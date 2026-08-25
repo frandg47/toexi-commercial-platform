@@ -31,6 +31,8 @@ export default function DialogCollectOrderDeposit({
   allAccounts = [],
   onSaved,
 }) {
+  const isOffline = !currentRegister;
+
   const [methods, setMethods] = useState([]);
   const [currency, setCurrency] = useState("ARS");
   const [methodId, setMethodId] = useState("");
@@ -43,7 +45,7 @@ export default function DialogCollectOrderDeposit({
   const [receipt, setReceipt] = useState(null);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || isOffline) return;
     const load = async () => {
       const [{ data: methodData }, { data: rates }] = await Promise.all([
         supabase
@@ -64,7 +66,7 @@ export default function DialogCollectOrderDeposit({
       });
     };
     load();
-  }, [open]);
+  }, [open, isOffline]);
 
   useEffect(() => {
     if (!open) return;
@@ -94,37 +96,58 @@ export default function DialogCollectOrderDeposit({
     }).format(Number(value || 0));
 
   const handleConfirm = async () => {
-    if (!currentRegister) {
-      toast.error("Abrí una caja para registrar la seña");
-      return;
-    }
-    if (!lead?.id || !methodId || Number(amount || 0) <= 0) {
-      toast.error("Completá el método y el importe de la seña");
+    if (!lead?.id || Number(amount || 0) <= 0) {
+      toast.error("Ingresá el importe de la seña");
       return;
     }
     if (currency !== "ARS" && !rate) {
       toast.error(`No hay cotización activa para ${currency}`);
       return;
     }
-    if (isTransfer && !destinationAccountId) {
-      toast.error("Seleccioná la cuenta destino");
-      return;
+
+    if (!isOffline) {
+      if (!methodId) {
+        toast.error("Seleccioná un método de pago");
+        return;
+      }
+      if (isTransfer && !destinationAccountId) {
+        toast.error("Seleccioná la cuenta destino");
+        return;
+      }
     }
 
     setSaving(true);
-    const accountId = destinationAccountId || selectedMethod?.account_id || null;
-    const { data, error } = await supabase.rpc("collect_order_deposit", {
-      p_lead_id: lead.id,
-      p_register_id: currentRegister.id,
-      p_payment_method_id: Number(methodId),
-      p_amount: Number(amount),
-      p_currency: currency,
-      p_amount_ars: amountARS,
-      p_fx_rate: rate,
-      p_reference: reference || null,
-      p_account_id: accountId ? Number(accountId) : null,
-      p_notes: notes || null,
-    });
+    const accountId = !isOffline ? (destinationAccountId || selectedMethod?.account_id || null) : null;
+
+    let data, error;
+
+    if (!isOffline) {
+      const result = await supabase.rpc("collect_order_deposit", {
+        p_lead_id: lead.id,
+        p_register_id: currentRegister.id,
+        p_payment_method_id: Number(methodId),
+        p_amount: Number(amount),
+        p_currency: currency,
+        p_amount_ars: amountARS,
+        p_fx_rate: rate,
+        p_reference: reference || null,
+        p_account_id: accountId ? Number(accountId) : null,
+        p_notes: notes || null,
+      });
+      data = result.data;
+      error = result.error;
+    } else {
+      const result = await supabase.rpc("register_order_deposit_offline", {
+        p_lead_id: lead.id,
+        p_amount: Number(amount),
+        p_currency: currency,
+        p_amount_ars: amountARS,
+        p_fx_rate: rate,
+      });
+      data = result.data;
+      error = result.error;
+    }
+
     setSaving(false);
 
     if (error) {
@@ -132,29 +155,35 @@ export default function DialogCollectOrderDeposit({
       return;
     }
 
-    const { data: reservedUnit } = lead.reserved_inventory_unit_id
-      ? await supabase
-          .from("inventory_units")
-          .select("identifier_value")
-          .eq("id", lead.reserved_inventory_unit_id)
-          .maybeSingle()
-      : { data: null };
-    const account = displayAccounts.find((item) => String(item.id) === String(accountId));
-    const nextReceipt = {
-      lead,
-      amount: Number(amount),
-      currency,
-      amountARS,
-      rate,
-      methodName: selectedMethod?.name || "",
-      accountName: account?.name || selectedMethod?.accounts?.name || "",
-      reference,
-      receiptId: data?.deposit_id,
-      reservedIdentifier: reservedUnit?.identifier_value || "",
-      expiresAt: lead.reservation_expires_at || lead.appointment_datetime,
-    };
-    setReceipt(nextReceipt);
-    toast.success("Seña registrada en caja");
+    if (!isOffline) {
+      const { data: reservedUnit } = lead.reserved_inventory_unit_id
+        ? await supabase
+            .from("inventory_units")
+            .select("identifier_value")
+            .eq("id", lead.reserved_inventory_unit_id)
+            .maybeSingle()
+        : { data: null };
+      const account = displayAccounts.find((item) => String(item.id) === String(accountId));
+      const nextReceipt = {
+        lead,
+        amount: Number(amount),
+        currency,
+        amountARS,
+        rate,
+        methodName: selectedMethod?.name || "",
+        accountName: account?.name || selectedMethod?.accounts?.name || "",
+        reference,
+        receiptId: data?.deposit_id,
+        reservedIdentifier: reservedUnit?.identifier_value || "",
+        expiresAt: lead.reservation_expires_at || lead.appointment_datetime,
+      };
+      setReceipt(nextReceipt);
+      toast.success("Seña registrada en caja");
+    } else {
+      toast.success("Seña registrada. Aparecerá en la caja del dueño para cobrar.");
+      window.dispatchEvent(new Event("deposit-created"));
+      onOpenChange(false);
+    }
     onSaved?.();
   };
 
@@ -169,8 +198,12 @@ export default function DialogCollectOrderDeposit({
           <DialogTitle>{receipt ? "Seña registrada" : "Registrar seña"}</DialogTitle>
           <DialogDescription>
             {receipt
-              ? "El ingreso quedó asociado al pedido y a la caja abierta."
-              : "El cobro requiere una caja abierta del usuario que confirma."}
+              ? isOffline
+                ? "La seña quedó registrada. Aparecerá como venta pendiente en la caja del dueño."
+                : "El ingreso quedó asociado al pedido y a la caja abierta."
+              : isOffline
+                ? "La seña quedará como venta pendiente para que el dueño de la caja la cobre."
+                : "El cobro se registra directamente en la caja abierta."}
           </DialogDescription>
         </DialogHeader>
 
@@ -209,28 +242,32 @@ export default function DialogCollectOrderDeposit({
               <Input type="number" min="0" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} />
               {currency !== "ARS" && rate && <p className="text-xs text-muted-foreground">Equivalente: {formatAmount(amountARS, "ARS")}</p>}
             </div>
-            <div className="grid gap-2">
-              <Label>Método de pago</Label>
-              <Select value={methodId} onValueChange={(value) => { setMethodId(value); setDestinationAccountId(""); }}>
-                <SelectTrigger><SelectValue placeholder="Seleccioná un método" /></SelectTrigger>
-                <SelectContent>{methods.map((method) => <SelectItem key={method.id} value={String(method.id)}>{method.name}</SelectItem>)}</SelectContent>
-              </Select>
-            </div>
-            {selectedMethod && (
-              <div className="grid gap-2">
-                <Label>{isTransfer ? "Cuenta destino" : "Cuenta de acreditación"}</Label>
-                {isTransfer ? (
-                  <Select value={destinationAccountId} onValueChange={setDestinationAccountId}>
-                    <SelectTrigger><SelectValue placeholder="Seleccioná una cuenta" /></SelectTrigger>
-                    <SelectContent>{virtualAccounts.map((account) => <SelectItem key={account.id} value={String(account.id)}>{account.name} ({account.currency})</SelectItem>)}</SelectContent>
+            {!isOffline && (
+              <>
+                <div className="grid gap-2">
+                  <Label>Método de pago</Label>
+                  <Select value={methodId} onValueChange={(value) => { setMethodId(value); setDestinationAccountId(""); }}>
+                    <SelectTrigger><SelectValue placeholder="Seleccioná un método" /></SelectTrigger>
+                    <SelectContent>{methods.map((method) => <SelectItem key={method.id} value={String(method.id)}>{method.name}</SelectItem>)}</SelectContent>
                   </Select>
-                ) : (
-                  <p className="rounded-md border px-3 py-2 text-sm">{selectedMethod.accounts?.name || "Sin configurar"}</p>
+                </div>
+                {selectedMethod && (
+                  <div className="grid gap-2">
+                    <Label>{isTransfer ? "Cuenta destino" : "Cuenta de acreditación"}</Label>
+                    {isTransfer ? (
+                      <Select value={destinationAccountId} onValueChange={setDestinationAccountId}>
+                        <SelectTrigger><SelectValue placeholder="Seleccioná una cuenta" /></SelectTrigger>
+                        <SelectContent>{virtualAccounts.map((account) => <SelectItem key={account.id} value={String(account.id)}>{account.name} ({account.currency})</SelectItem>)}</SelectContent>
+                      </Select>
+                    ) : (
+                      <p className="rounded-md border px-3 py-2 text-sm">{selectedMethod.accounts?.name || "Sin configurar"}</p>
+                    )}
+                  </div>
                 )}
-              </div>
+                <Input placeholder="Referencia / autorización (opcional)" value={reference} onChange={(event) => setReference(event.target.value)} />
+                <Textarea placeholder="Notas (opcional)" value={notes} onChange={(event) => setNotes(event.target.value)} />
+              </>
             )}
-            <Input placeholder="Referencia / autorización (opcional)" value={reference} onChange={(event) => setReference(event.target.value)} />
-            <Textarea placeholder="Notas (opcional)" value={notes} onChange={(event) => setNotes(event.target.value)} />
           </div>
         )}
 

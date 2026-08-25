@@ -61,6 +61,16 @@ import {
 import { useAuth } from "../context/AuthContextProvider";
 import { useCashRegister } from "@/hooks/useCashRegister";
 import DialogCollectOrderDeposit from "./DialogCollectOrderDeposit";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const STATUS_STYLES = {
   pendiente: "text-yellow-700",
@@ -184,15 +194,36 @@ const OrdersTable = () => {
     if (["cancelado", "sin_exito"].includes(status)) {
       const lead = orders.find((o) => o.id === id);
       if (lead?.deposit_paid) {
-        const amountLabel = `${lead.deposit_currency === "USD" ? "USD $" : "$"}${Number(
-          lead.deposit_amount || 0
-        ).toLocaleString("es-AR")}`;
-        const confirmed = window.confirm(
-          `Este pedido tiene una seña pagada de ${amountLabel}. Al ${
+        const { data: deposits } = await supabase
+          .from("order_deposits")
+          .select("status")
+          .eq("lead_id", id)
+          .in("status", ["received", "pending_collection"]);
+
+        const hasCollected = deposits?.some((d) => d.status === "received");
+        const hasPending = deposits?.some((d) => d.status === "pending_collection");
+
+        let message = "";
+        if (hasCollected) {
+          const amountLabel = `${lead.deposit_currency === "USD" ? "USD $" : "$"}${Number(
+            lead.deposit_amount || 0
+          ).toLocaleString("es-AR")}`;
+          message = `Este pedido tiene una seña cobrada de ${amountLabel}. Al ${
             status === "cancelado" ? "cancelarlo" : "marcarlo sin éxito"
-          }, la seña queda perdida (no se devuelve al cliente). ¿Continuar?`
-        );
-        if (!confirmed) return;
+          }, la seña queda perdida (no se devuelve al cliente). ¿Continuar?`;
+        } else if (hasPending) {
+          message = `Este pedido tiene una seña registrada pero aún no cobrada en caja. Al ${
+            status === "cancelado" ? "cancelarlo" : "marcarlo sin éxito"
+          }, la seña se dará de baja. ¿Continuar?`;
+        }
+
+        if (message) {
+          cancelLeadRef.current = id;
+          cancelStatusRef.current = status;
+          setCancelMessage(message);
+          setCancelDialogOpen(true);
+          return;
+        }
       }
 
       const { error } = await supabase.rpc("cancel_lead_order", {
@@ -217,6 +248,25 @@ const OrdersTable = () => {
 
     if (error) {
       toast.error("Error actualizando estado");
+    } else {
+      toast.success("Estado actualizado");
+      fetchOrders(false);
+    }
+  };
+
+  const confirmCancel = async () => {
+    const id = cancelLeadRef.current;
+    const status = cancelStatusRef.current;
+    setCancelDialogOpen(false);
+
+    const { error } = await supabase.rpc("cancel_lead_order", {
+      p_lead_id: id,
+      p_status: status,
+      p_reason: status === "cancelado" ? "Pedido cancelado" : "Pedido sin exito",
+    });
+
+    if (error) {
+      toast.error("Error actualizando estado", { description: error.message });
     } else {
       toast.success("Estado actualizado");
       fetchOrders(false);
@@ -308,6 +358,11 @@ const OrdersTable = () => {
   const [depositLead, setDepositLead] = useState(null);
   const [depositOpen, setDepositOpen] = useState(false);
 
+  const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
+  const [cancelMessage, setCancelMessage] = useState("");
+  const cancelLeadRef = useRef(null);
+  const cancelStatusRef = useRef(null);
+
   const handleCreateSale = (lead) => {
     setSaleLead(lead);
     setSaleOpen(true);
@@ -340,16 +395,13 @@ const OrdersTable = () => {
   const { role, id_auth } = useAuth();
   const {
     loadPendingSales,
+    loadPendingDeposits,
     currentRegister,
     virtualAccounts,
     allAccounts,
   } = useCashRegister(id_auth);
 
   const handleCollectDeposit = (lead) => {
-    if (!currentRegister) {
-      toast.error("Abrí una caja para registrar la seña");
-      return;
-    }
     setDepositLead(lead);
     setDepositOpen(true);
   };
@@ -711,14 +763,14 @@ const OrdersTable = () => {
                                         <IconReceipt2 className="mr-2 h-4 w-4" />
                                         Registrar venta
                                      </DropdownMenuItem>
-                                      <DropdownMenuItem
+                                      {/* <DropdownMenuItem
                                         onClick={() =>
                                           handleUpdateStatus(o.id, "sin_exito")
                                         }
                                       >
                                         <IconBan className="mr-2 h-4 w-4" />
                                         Sin éxito (no concretó)
-                                      </DropdownMenuItem>
+                                      </DropdownMenuItem> */}
                                     </>
                                    )}
                                   <DropdownMenuItem
@@ -824,8 +876,23 @@ const OrdersTable = () => {
         currentRegister={currentRegister}
         virtualAccounts={virtualAccounts}
         allAccounts={allAccounts}
-        onSaved={() => fetchOrders(false)}
+        onSaved={() => { fetchOrders(false); loadPendingDeposits(); }}
       />
+
+      <AlertDialog open={cancelDialogOpen} onOpenChange={setCancelDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Confirmar cancelación?</AlertDialogTitle>
+            <AlertDialogDescription>{cancelMessage}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Volver</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmCancel} className="bg-red-600 hover:bg-red-700">
+              Continuar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
