@@ -20,6 +20,7 @@ export function useCashRegister(userId) {
   const [currentRegister, setCurrentRegister] = useState(null);
   const [movements, setMovements] = useState([]);
   const [pendingSales, setPendingSales] = useState([]);
+  const [pendingDeposits, setPendingDeposits] = useState([]);
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(false);
   const [virtualAccounts, setVirtualAccounts] = useState([]);
@@ -79,6 +80,21 @@ export function useCashRegister(userId) {
       setPendingSales(data || []);
     } catch (err) {
       console.error("Error loading pending sales:", err);
+    }
+  }, []);
+
+  const loadPendingDeposits = useCallback(async () => {
+    try {
+      const { data, error } = await supabase
+        .from("order_deposits")
+        .select("id, lead_id, customer_id, amount, currency, amount_ars, fx_rate_used, status, received_at, leads(id, customers(id, name, last_name, phone))")
+        .eq("status", "pending_collection")
+        .order("received_at", { ascending: false });
+
+      if (error) throw error;
+      setPendingDeposits(data || []);
+    } catch (err) {
+      console.error("Error loading pending deposits:", err);
     }
   }, []);
 
@@ -144,6 +160,36 @@ export function useCashRegister(userId) {
     }
   }, []);
 
+  const collectPendingDeposit = useCallback(
+    async (depositId, paymentData) => {
+      if (!currentRegister) return { ok: false, error: "No hay caja abierta" };
+      setLoading(true);
+      try {
+        const { data, error } = await supabase.rpc("collect_pending_deposit", {
+          p_deposit_id: depositId,
+          p_register_id: currentRegister.id,
+          p_payment_method_id: paymentData.payment_method_id,
+          p_account_id: paymentData.account_id || null,
+          p_reference: paymentData.reference || null,
+        });
+
+        if (error) throw error;
+
+        await loadMovements(currentRegister.id);
+        await loadPendingDeposits();
+        await loadEfectivoAccounts();
+        await loadVirtualAccounts();
+        return { ok: true, depositId: data?.deposit_id };
+      } catch (err) {
+        console.error("Error collecting deposit:", err);
+        return { ok: false, error: err.message };
+      } finally {
+        setLoading(false);
+      }
+    },
+    [currentRegister, loadMovements, loadPendingDeposits, loadEfectivoAccounts, loadVirtualAccounts]
+  );
+
   const loadAllAccounts = useCallback(async () => {
     try {
       const { data: accounts } = await supabase
@@ -186,6 +232,13 @@ export function useCashRegister(userId) {
         { event: "UPDATE", schema: "public", table: "sales" },
         () => {
           loadPendingSales();
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "order_deposits" },
+        () => {
+          loadPendingDeposits();
         }
       )
       .on(
@@ -235,7 +288,7 @@ export function useCashRegister(userId) {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [userId, loadPendingSales, currentRegister?.id, loadMovements, loadVirtualAccounts, loadEfectivoAccounts, loadAllAccounts, loadAccountMovements]);
+  }, [userId, loadPendingSales, loadPendingDeposits, currentRegister?.id, loadMovements, loadVirtualAccounts, loadEfectivoAccounts, loadAllAccounts, loadAccountMovements]);
 
   // 🔄 Custom event: cuando se crea una venta desde SheetNewSale
   useEffect(() => {
@@ -251,16 +304,24 @@ export function useCashRegister(userId) {
     return () => window.removeEventListener("sale-cancelled", handler);
   }, [loadPendingSales]);
 
-  // 🔄 Refresh pending sales when user returns to the tab (cross-page updates)
+  // 🔄 Custom event: cuando se registra una seña offline desde DialogCollectOrderDeposit
+  useEffect(() => {
+    const handler = () => loadPendingDeposits();
+    window.addEventListener("deposit-created", handler);
+    return () => window.removeEventListener("deposit-created", handler);
+  }, [loadPendingDeposits]);
+
+  // 🔄 Refresh pending sales and deposits when user returns to the tab (cross-page updates)
   useEffect(() => {
     const handleVisibility = () => {
       if (document.visibilityState === "visible") {
         loadPendingSales();
+        loadPendingDeposits();
       }
     };
     document.addEventListener("visibilitychange", handleVisibility);
     return () => document.removeEventListener("visibilitychange", handleVisibility);
-  }, [loadPendingSales]);
+  }, [loadPendingSales, loadPendingDeposits]);
 
   const checkOpenRegister = useCallback(async () => {
     if (!userId) return null;
@@ -312,6 +373,7 @@ export function useCashRegister(userId) {
       setOtherUserOpenRegister(otherOpenData || null);
 
       await loadPendingSales();
+      await loadPendingDeposits();
       await loadVirtualAccounts();
       await loadEfectivoAccounts();
       await loadAllAccounts();
@@ -322,7 +384,7 @@ export function useCashRegister(userId) {
     } finally {
       setLoading(false);
     }
-  }, [userId, loadMovements, loadPendingSales, loadVirtualAccounts, loadEfectivoAccounts, loadAllAccounts, loadAccountMovements]);
+  }, [userId, loadMovements, loadPendingSales, loadPendingDeposits, loadVirtualAccounts, loadEfectivoAccounts, loadAllAccounts, loadAccountMovements]);
 
   useEffect(() => {
     if (userId) checkOpenRegister();
@@ -616,6 +678,7 @@ export function useCashRegister(userId) {
 
         await loadMovements(currentRegister.id);
         await loadPendingSales();
+        await loadPendingDeposits();
         await loadEfectivoAccounts();
         await loadVirtualAccounts();
         return { ok: true, saleId, accreditationAudit };
@@ -891,6 +954,7 @@ export function useCashRegister(userId) {
     otherUserOpenRegister,
     movements,
     pendingSales,
+    pendingDeposits,
     history,
     loading,
     virtualAccounts,
@@ -908,6 +972,8 @@ export function useCashRegister(userId) {
     payoutPendingSale,
     loadMovements,
     loadPendingSales,
+    loadPendingDeposits,
+    collectPendingDeposit,
     loadHistory,
     loadVirtualAccounts,
     loadEfectivoAccounts,

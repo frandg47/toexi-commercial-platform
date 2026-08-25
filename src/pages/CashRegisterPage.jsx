@@ -46,6 +46,7 @@ import DialogOpenCashRegister from "@/components/cash-register/DialogOpenCashReg
 import DialogCloseCashRegister from "@/components/cash-register/DialogCloseCashRegister";
 import DialogRegisterMovement from "@/components/cash-register/DialogRegisterMovement";
 import PendingSalesSection from "@/components/cash-register/PendingSalesSection";
+import PendingDepositsSection from "@/components/cash-register/PendingDepositsSection";
 
 const formatCurrency = (amount, currency = "ARS") => {
   const currencies = {
@@ -86,6 +87,7 @@ export default function CashRegisterPage() {
     otherUserOpenRegister,
     movements,
     pendingSales,
+    pendingDeposits,
     history,
     loading,
     efectivoAccounts,
@@ -98,7 +100,9 @@ export default function CashRegisterPage() {
     closeStaleRegister,
     registerMovement,
     collectPendingSale,
+    collectPendingDeposit,
     payoutPendingSale,
+    loadPendingDeposits,
     loadHistory,
     loadEfectivoAccounts,
     loadVirtualAccounts,
@@ -132,6 +136,13 @@ export default function CashRegisterPage() {
       loadHistory();
     }
   }, [userId, checkOpenRegister, loadHistory]);
+
+  // Reload pending deposits when navigating to this page
+  useEffect(() => {
+    if (userId && isOpen) {
+      loadPendingDeposits();
+    }
+  }, [userId, isOpen, loadPendingDeposits]);
 
   // Auto-open stale register dialog when detected and no current open register
   useEffect(() => {
@@ -266,6 +277,14 @@ export default function CashRegisterPage() {
     } else {
       result = await collectPendingSale(saleId, paymentData);
     }
+    if (result?.ok) {
+      await loadHistory();
+    }
+    return result;
+  };
+
+  const handleCollectPendingDeposit = async (depositId, paymentData) => {
+    const result = await collectPendingDeposit(depositId, paymentData);
     if (result?.ok) {
       await loadHistory();
     }
@@ -610,6 +629,17 @@ export default function CashRegisterPage() {
           usdtRate={usdtRate}
           virtualAccounts={virtualAccounts}
           cajaAccounts={[...efectivoAccounts, ...virtualAccounts]}
+        />
+      )}
+
+      {/* Señas pendientes de cobro */}
+      {isOpen && (
+        <PendingDepositsSection
+          pendingDeposits={pendingDeposits}
+          onCollect={handleCollectPendingDeposit}
+          loading={loading}
+          virtualAccounts={virtualAccounts}
+          allAccounts={allAccounts}
         />
       )}
 

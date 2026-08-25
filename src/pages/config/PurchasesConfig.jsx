@@ -160,26 +160,21 @@ const PurchasesConfig = () => {
     from: startOfMonth(new Date()),
     to: endOfMonth(new Date()),
   });
-  const [editOpen, setEditOpen] = useState(false);
-  const [editingPurchase, setEditingPurchase] = useState(null);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelingPurchase, setCancelingPurchase] = useState(null);
   const [cancelReason, setCancelReason] = useState("");
   const [cancelingProcess, setCancelingProcess] = useState(false);
-  const [editForm, setEditForm] = useState({
-    provider_id: "",
-    purchase_date: "",
-    currency: "ARS",
-    notes: "",
-    rate_mode: "system",
-    manual_fx_rate: "",
-  });
-  const [editItems, setEditItems] = useState([]);
-  const [editPayments, setEditPayments] = useState([
+  const [completeOpen, setCompleteOpen] = useState(false);
+  const [completingPurchase, setCompletingPurchase] = useState(null);
+  const [completeItems, setCompleteItems] = useState([]);
+  const [completeLoading, setCompleteLoading] = useState(false);
+  const [completePayments, setCompletePayments] = useState([
     { account_id: "", amount: "" },
   ]);
-  const [editSearchVariant, setEditSearchVariant] = useState("");
-  const [editFocusVariant, setEditFocusVariant] = useState(false);
+  const [completeSerialText, setCompleteSerialText] = useState("");
+  const [completeActiveItem, setCompleteActiveItem] = useState(null);
+  const [completeAddingPayment, setCompleteAddingPayment] = useState(false);
+  const [completeAddingSerials, setCompleteAddingSerials] = useState(false);
 
   const [form, setForm] = useState({
     provider_id: "",
@@ -262,8 +257,9 @@ const PurchasesConfig = () => {
           .maybeSingle(),
         supabase
           .from("accounts")
-          .select("id, name, currency, is_reference_capital, is_efectivo, is_caja_virtual")
+          .select("id, name, currency, is_reference_capital, is_efectivo, is_caja_virtual, active")
           .eq("is_reference_capital", false)
+          .eq("active", true)
           .order("name", { ascending: true }),
       ]);
 
@@ -335,64 +331,6 @@ const PurchasesConfig = () => {
     [displayAccounts, form.currency, form.manual_fx_rate, form.rate_mode, fxRate, payments, usdtRate]
   );
 
-  const remainingArs = useMemo(
-    () => Math.max(Number(totalAmountArs || 0) - Number(totalPaid || 0), 0),
-    [totalAmountArs, totalPaid]
-  );
-
-  const editTotalAmount = useMemo(() => {
-    return editItems.reduce(
-      (acc, item) => acc + Number(item.quantity || 0) * Number(item.unit_cost || 0),
-      0
-    );
-  }, [editItems]);
-
-  const editTotalAmountArs = useMemo(() => {
-    const rate = getEffectiveRateForCurrency(
-      editForm.currency,
-      editForm.rate_mode,
-      editForm.manual_fx_rate,
-      fxRate,
-      usdtRate
-    );
-    if (editForm.currency !== "ARS" && !rate) return NaN;
-    return editForm.currency === "ARS" ? editTotalAmount : editTotalAmount * rate;
-  }, [
-    editForm.currency,
-    editForm.manual_fx_rate,
-    editForm.rate_mode,
-    editTotalAmount,
-    fxRate,
-    usdtRate,
-  ]);
-
-  const editTotalPaid = useMemo(
-    () =>
-      editPayments.reduce((acc, payment) => {
-        const account = displayAccounts.find(
-          (item) => String(item.id) === String(payment.account_id || "")
-        );
-        const currency = account?.currency || editForm.currency;
-        const amountArs = convertAmountToARS(
-          payment.amount,
-          currency,
-          editForm.rate_mode === "manual"
-            ? resolveManualRate("USD", editForm.manual_fx_rate)
-            : fxRate,
-          editForm.rate_mode === "manual"
-            ? resolveManualRate("USDT", editForm.manual_fx_rate)
-            : usdtRate
-        );
-        return acc + (Number.isFinite(amountArs) ? amountArs : 0);
-      }, 0),
-    [displayAccounts, editForm.currency, editForm.manual_fx_rate, editForm.rate_mode, editPayments, fxRate, usdtRate]
-  );
-
-  const editRemainingArs = useMemo(
-    () => Math.max(Number(editTotalAmountArs || 0) - Number(editTotalPaid || 0), 0),
-    [editTotalAmountArs, editTotalPaid]
-  );
-
   const handleAddItem = (variant) => {
     if (items.some((i) => i.variant_id === variant.id)) return;
     setItems((prev) => [
@@ -432,33 +370,6 @@ const PurchasesConfig = () => {
     );
   };
 
-  const fillRemainingPayment = (index) => {
-    const payment = payments[index];
-    if (!payment?.account_id) return;
-
-    const account = displayAccounts.find(
-      (item) => String(item.id) === String(payment.account_id || "")
-    );
-    const accountCurrency = account?.currency || "ARS";
-    const rate = getEffectiveRateForCurrency(
-      accountCurrency,
-      form.rate_mode,
-      form.manual_fx_rate,
-      fxRate,
-      usdtRate
-    );
-
-    if (accountCurrency !== "ARS" && !rate) {
-      toast.error(`No hay cotizacion disponible para ${accountCurrency}`);
-      return;
-    }
-
-    const amount =
-      accountCurrency === "ARS" ? remainingArs : Number(remainingArs || 0) / rate;
-
-    handleUpdatePayment(index, "amount", String(Number(amount || 0).toFixed(2)));
-  };
-
   const handleRemovePayment = (index) => {
     setPayments((current) => {
       if (current.length === 1) return [{ account_id: "", amount: "" }];
@@ -466,84 +377,7 @@ const PurchasesConfig = () => {
     });
   };
 
-  const handleAddEditItem = (variant) => {
-    if (isSerialTrackedVariant(variant)) {
-      toast.error(
-        "Los productos serializados todavia no se pueden agregar desde la edicion de compras"
-      );
-      return;
-    }
-    if (editItems.some((item) => item.variant_id === variant.id)) return;
-    setEditItems((prev) => [
-      ...prev,
-      {
-        variant_id: variant.id,
-        variant,
-        quantity: 1,
-        unit_cost: "",
-        identifiersText: "",
-      },
-    ]);
-    setEditSearchVariant("");
-  };
 
-  const handleUpdateEditItem = (id, field, value) => {
-    setEditItems((prev) =>
-      prev.map((item) =>
-        item.variant_id === id ? { ...item, [field]: value } : item
-      )
-    );
-  };
-
-  const handleRemoveEditItem = (id) => {
-    setEditItems((prev) => prev.filter((item) => item.variant_id !== id));
-  };
-
-  const handleAddEditPayment = () => {
-    setEditPayments((current) => [...current, { account_id: "", amount: "" }]);
-  };
-
-  const handleUpdateEditPayment = (index, field, value) => {
-    setEditPayments((current) =>
-      current.map((payment, paymentIndex) =>
-        paymentIndex === index ? { ...payment, [field]: value } : payment
-      )
-    );
-  };
-
-  const fillEditRemainingPayment = (index) => {
-    const payment = editPayments[index];
-    if (!payment?.account_id) return;
-
-    const account = displayAccounts.find(
-      (item) => String(item.id) === String(payment.account_id || "")
-    );
-    const accountCurrency = account?.currency || "ARS";
-    const rate = getEffectiveRateForCurrency(
-      accountCurrency,
-      editForm.rate_mode,
-      editForm.manual_fx_rate,
-      fxRate,
-      usdtRate
-    );
-
-    if (accountCurrency !== "ARS" && !rate) {
-      toast.error(`No hay cotizacion disponible para ${accountCurrency}`);
-      return;
-    }
-
-    const amount =
-      accountCurrency === "ARS" ? editRemainingArs : Number(editRemainingArs || 0) / rate;
-
-    handleUpdateEditPayment(index, "amount", String(Number(amount || 0).toFixed(2)));
-  };
-
-  const handleRemoveEditPayment = (index) => {
-    setEditPayments((current) => {
-      if (current.length === 1) return [{ account_id: "", amount: "" }];
-      return current.filter((_, paymentIndex) => paymentIndex !== index);
-    });
-  };
 
   const handleSave = async () => {
     if (!form.provider_id) return toast.error("Selecciona un proveedor");
@@ -558,13 +392,16 @@ const PurchasesConfig = () => {
     }
     if (
       payments.some(
-        (payment) => !payment.account_id || Number(payment.amount || 0) <= 0
+        (payment) =>
+          payment.account_id &&
+          (!payment.account_id || Number(payment.amount || 0) <= 0)
       )
     ) {
-      return toast.error("Completa todas las cuentas y montos del pago");
+      return toast.error("Si agregas un pago, completa cuenta y monto");
     }
     if (
       payments.some((payment) => {
+        if (!payment.account_id || Number(payment.amount || 0) <= 0) return false;
         const account = displayAccounts.find(
           (item) => String(item.id) === String(payment.account_id || "")
         );
@@ -588,11 +425,6 @@ const PurchasesConfig = () => {
         "Falta cotizacion activa para alguna de las cuentas elegidas"
       );
     }
-    if (Math.abs(totalPaid - totalAmountArs) > 0.01) {
-      return toast.error(
-        "La suma de los pagos debe coincidir con el total de la compra"
-      );
-    }
 
     const currency = form.currency;
     const rate = getEffectiveRateForCurrency(
@@ -610,12 +442,6 @@ const PurchasesConfig = () => {
     for (const item of items) {
       if (!isSerialTrackedVariant(item.variant)) continue;
       const identifiers = parseIdentifiers(item.identifiersText);
-      const expected = Number(item.quantity || 0);
-      if (identifiers.length !== expected) {
-        return toast.error(
-          `${item.variant?.products?.name || "La variante"} requiere ${expected} IMEI/SN y cargaste ${identifiers.length}`
-        );
-      }
       for (const identifier of identifiers) {
         const normalized = normalizeIdentifier(identifier);
         if (!normalized) {
@@ -630,7 +456,9 @@ const PurchasesConfig = () => {
       }
     }
 
-    const paymentRows = payments.map((payment) => {
+    const paymentRows = payments
+      .filter((payment) => payment.account_id && Number(payment.amount || 0) > 0)
+      .map((payment) => {
       const account = displayAccounts.find(
         (item) => String(item.id) === String(payment.account_id || "")
       );
@@ -729,246 +557,7 @@ const PurchasesConfig = () => {
     });
   };
 
-  const openPurchaseEdit = async (purchase) => {
-    if (!purchase?.id) return;
-    if (purchase.status === "cancelled") {
-      toast.error("No se puede editar una compra anulada");
-      return;
-    }
 
-    const [{ data: purchaseData, error: purchaseError }, { data: itemsData, error: itemsError }] =
-      await Promise.all([
-        supabase
-          .from("purchases")
-          .select(
-            "id, provider_id, purchase_date, currency, total_amount, notes, status, void_reason, voided_at, purchase_payments(id, account_id, amount, currency, amount_ars, fx_rate_used)"
-          )
-          .eq("id", purchase.id)
-          .single(),
-        supabase
-          .from("purchase_items")
-          .select(
-            "id, variant_id, quantity, unit_cost, subtotal, product_variants(id, variant_name, color, storage, ram, products(name, inventory_tracking_mode))"
-          )
-          .eq("purchase_id", purchase.id)
-          .order("id", { ascending: true }),
-      ]);
-
-    if (purchaseError) {
-      toast.error("No se pudo cargar la compra", {
-        description: purchaseError.message,
-      });
-      return;
-    }
-
-    if (itemsError) {
-      toast.error("No se pudieron cargar los items de la compra", {
-        description: itemsError.message,
-      });
-      return;
-    }
-
-    if ((itemsData || []).some((item) => isSerialTrackedVariant(item.product_variants))) {
-      toast.error(
-        "Las compras con productos serializados todavia no se pueden editar desde este formulario"
-      );
-      return;
-    }
-
-    setEditingPurchase(purchaseData);
-    setEditForm({
-      provider_id: String(purchaseData.provider_id || ""),
-      purchase_date: purchaseData.purchase_date || "",
-      currency: purchaseData.currency || "ARS",
-      notes: purchaseData.notes || "",
-      rate_mode: "system",
-      manual_fx_rate: "",
-    });
-    setEditItems(
-      (itemsData || []).map((item) => ({
-        variant_id: item.variant_id,
-        variant: item.product_variants,
-        quantity: item.quantity,
-        unit_cost: item.unit_cost,
-        identifiersText: "",
-      }))
-    );
-    setEditPayments(
-      purchaseData.purchase_payments?.length
-        ? purchaseData.purchase_payments.map((paymentItem) => ({
-            account_id: paymentItem.account_id ? String(paymentItem.account_id) : "",
-            amount: String(paymentItem.amount ?? ""),
-          }))
-        : [{ account_id: "", amount: "" }]
-    );
-    setEditOpen(true);
-  };
-
-  const handleSaveEdit = async () => {
-    if (!editingPurchase?.id) return;
-    if (editingPurchase.status === "cancelled") {
-      return toast.error("No se puede editar una compra anulada");
-    }
-    if (editItems.some((item) => isSerialTrackedVariant(item.variant))) {
-      return toast.error(
-        "Las compras con productos serializados todavia no se pueden editar"
-      );
-    }
-    if (!editForm.provider_id) return toast.error("Selecciona un proveedor");
-    if (!editItems.length) return toast.error("Agrega al menos un producto");
-    if (
-      editPayments.some(
-        (payment) => !payment.account_id || Number(payment.amount || 0) <= 0
-      )
-    ) {
-      return toast.error("Completa todas las cuentas y montos del pago");
-    }
-    if (
-      editPayments.some((payment) => {
-        const account = displayAccounts.find(
-          (item) => String(item.id) === String(payment.account_id || "")
-        );
-        if (!account) return true;
-        if (
-          account.currency !== "ARS" &&
-          !getEffectiveRateForCurrency(
-            account.currency,
-            editForm.rate_mode,
-            editForm.manual_fx_rate,
-            fxRate,
-            usdtRate
-          )
-        ) {
-          return true;
-        }
-        return false;
-      })
-    ) {
-      return toast.error("Falta cotizacion activa para alguna de las cuentas elegidas");
-    }
-    if (Math.abs(editTotalPaid - editTotalAmountArs) > 0.01) {
-      return toast.error("La suma de los pagos debe coincidir con el total de la compra");
-    }
-
-    const currency = editForm.currency;
-    const rate = getEffectiveRateForCurrency(
-      currency,
-      editForm.rate_mode,
-      editForm.manual_fx_rate,
-      fxRate,
-      usdtRate
-    );
-    if (currency !== "ARS" && !rate) {
-      return toast.error(`No hay cotizacion activa para ${currency}`);
-    }
-
-    const { error: purchaseError } = await supabase
-      .from("purchases")
-      .update({
-        provider_id: Number(editForm.provider_id),
-        purchase_date: editForm.purchase_date,
-        currency,
-        total_amount: editTotalAmount,
-        total_amount_ars: totalAmountArs,
-        fx_rate_used: currency === "ARS" ? null : rate,
-        notes: editForm.notes || null,
-      })
-      .eq("id", editingPurchase.id);
-
-    if (purchaseError) {
-      toast.error("No se pudo actualizar la compra", {
-        description: purchaseError.message,
-      });
-      return;
-    }
-
-    const { error: deletePaymentsError } = await supabase
-      .from("purchase_payments")
-      .delete()
-      .eq("purchase_id", editingPurchase.id);
-
-    if (deletePaymentsError) {
-      toast.error("No se pudieron actualizar los pagos de la compra", {
-        description: deletePaymentsError.message,
-      });
-      return;
-    }
-
-    const editPaymentRows = editPayments.map((payment) => {
-      const account = displayAccounts.find(
-        (item) => String(item.id) === String(payment.account_id || "")
-      );
-      const paymentAmount = Number(payment.amount || 0);
-      const paymentCurrency = account?.currency || currency;
-      const paymentRate = getEffectiveRateForCurrency(
-        paymentCurrency,
-        editForm.rate_mode,
-        editForm.manual_fx_rate,
-        fxRate,
-        usdtRate
-      );
-      return {
-        purchase_id: editingPurchase.id,
-        account_id: Number(payment.account_id),
-        amount: paymentAmount,
-        currency: paymentCurrency,
-        amount_ars:
-          paymentCurrency === "ARS" ? paymentAmount : paymentAmount * paymentRate,
-        fx_rate_used: paymentCurrency === "ARS" ? null : paymentRate,
-        notes: editForm.notes || null,
-      };
-    });
-
-    const { error: paymentInsertError } = await supabase
-      .from("purchase_payments")
-      .insert(editPaymentRows);
-
-    if (paymentInsertError) {
-      toast.error("No se pudo registrar el pago de la compra", {
-        description: paymentInsertError.message,
-      });
-      return;
-    }
-
-    const { error: deleteItemsError } = await supabase
-      .from("purchase_items")
-      .delete()
-      .eq("purchase_id", editingPurchase.id);
-
-    if (deleteItemsError) {
-      toast.error("No se pudieron actualizar los items", {
-        description: deleteItemsError.message,
-      });
-      return;
-    }
-
-    const payloadItems = editItems.map((item) => ({
-      purchase_id: editingPurchase.id,
-      variant_id: item.variant_id,
-      quantity: Number(item.quantity || 0),
-      unit_cost: Number(item.unit_cost || 0),
-      subtotal: Number(item.quantity || 0) * Number(item.unit_cost || 0),
-    }));
-
-    const { error: insertItemsError } = await supabase
-      .from("purchase_items")
-      .insert(payloadItems);
-
-    if (insertItemsError) {
-      toast.error("No se pudieron guardar los nuevos items", {
-        description: insertItemsError.message,
-      });
-      return;
-    }
-
-    toast.success("Compra actualizada");
-    setEditOpen(false);
-    setEditingPurchase(null);
-    setEditItems([]);
-    setEditSearchVariant("");
-    setEditPayments([{ account_id: "", amount: "" }]);
-    await loadPurchases();
-  };
 
   const handleCancelPurchase = async () => {
     if (!cancelingPurchase?.id) return;
@@ -1000,6 +589,225 @@ const PurchasesConfig = () => {
     }
   };
 
+  const openCompletePurchase = async (purchase) => {
+    if (!purchase?.id) return;
+    if (purchase.status === "cancelled") {
+      toast.error("No se puede completar una compra anulada");
+      return;
+    }
+
+    setCompleteOpen(true);
+    setCompleteLoading(true);
+    setCompletingPurchase(purchase);
+    setCompletePayments([{ account_id: "", amount: "" }]);
+    setCompleteSerialText("");
+    setCompleteActiveItem(null);
+
+    const { data: itemsData, error: itemsError } = await supabase
+      .from("purchase_items")
+      .select(
+        "id, variant_id, quantity, unit_cost, subtotal, product_variants(id, variant_name, color, storage, ram, products(name, inventory_tracking_mode))"
+      )
+      .eq("purchase_id", purchase.id)
+      .order("id", { ascending: true });
+
+    if (itemsError) {
+      toast.error("No se pudieron cargar los items", {
+        description: itemsError.message,
+      });
+      setCompleteLoading(false);
+      return;
+    }
+
+    const itemsWithSerials = await Promise.all(
+      (itemsData || []).map(async (item) => {
+        if (item.product_variants?.products?.inventory_tracking_mode !== "serial") {
+          return { ...item, enteredSerials: [], pendingCount: 0 };
+        }
+        const { data: serials } = await supabase
+          .from("inventory_units")
+          .select("id, identifier_value")
+          .eq("purchase_item_id", item.id)
+          .eq("status", "available");
+        const entered = serials || [];
+        return {
+          ...item,
+          enteredSerials: entered,
+          pendingCount: item.quantity - entered.length,
+        };
+      })
+    );
+
+    setCompleteItems(itemsWithSerials);
+    setCompleteLoading(false);
+  };
+
+  const completeTotalPaid = useMemo(() => {
+    if (!completingPurchase) return 0;
+    return (
+      completingPurchase.purchase_payments?.reduce(
+        (acc, p) => acc + Number(p.amount_ars || 0),
+        0
+      ) || 0
+    );
+  }, [completingPurchase]);
+
+  const completeRemainingArs = useMemo(
+    () =>
+      Math.max(
+        Number(completingPurchase?.total_amount_ars || 0) - completeTotalPaid,
+        0
+      ),
+    [completingPurchase, completeTotalPaid]
+  );
+
+  const completePendingSerials = useMemo(
+    () => completeItems.filter((item) => item.pendingCount > 0),
+    [completeItems]
+  );
+
+  const handleAddCompletePayment = async () => {
+    const validPayments = completePayments.filter(
+      (p) => p.account_id && Number(p.amount || 0) > 0
+    );
+    if (validPayments.length === 0) {
+      return toast.error("Agrega al menos un pago valido");
+    }
+
+    for (const payment of validPayments) {
+      const account = displayAccounts.find(
+        (a) => String(a.id) === String(payment.account_id)
+      );
+      if (!account) {
+        return toast.error("Cuenta no encontrada");
+      }
+      if (
+        account.currency !== "ARS" &&
+        !getEffectiveRateForCurrency(
+          account.currency,
+          completingPurchase.rate_mode || "system",
+          completingPurchase.manual_fx_rate,
+          fxRate,
+          usdtRate
+        )
+      ) {
+        return toast.error(`No hay cotizacion para ${account.currency}`);
+      }
+    }
+
+    setCompleteAddingPayment(true);
+    try {
+      for (const payment of validPayments) {
+        const account = displayAccounts.find(
+          (a) => String(a.id) === String(payment.account_id)
+        );
+        const paymentCurrency = account?.currency || completingPurchase.currency;
+        const paymentRate = getEffectiveRateForCurrency(
+          paymentCurrency,
+          completingPurchase.rate_mode || "system",
+          completingPurchase.manual_fx_rate,
+          fxRate,
+          usdtRate
+        );
+        const paymentAmount = Number(payment.amount || 0);
+
+        const { error } = await supabase.rpc("add_purchase_payment", {
+          p_purchase_id: completingPurchase.id,
+          p_account_id: Number(payment.account_id),
+          p_amount: paymentAmount,
+          p_currency: paymentCurrency,
+          p_amount_ars:
+            paymentCurrency === "ARS" ? paymentAmount : paymentAmount * paymentRate,
+          p_fx_rate_used: paymentCurrency === "ARS" ? null : paymentRate,
+        });
+
+        if (error) throw error;
+      }
+
+      toast.success("Pago/s agregado/s");
+      setCompletePayments([{ account_id: "", amount: "" }]);
+
+      const { data: updated } = await supabase
+        .from("purchases")
+        .select("id, status, purchase_payments(amount_ars)")
+        .eq("id", completingPurchase.id)
+        .single();
+
+      if (updated) {
+        setCompletingPurchase((prev) => ({
+          ...prev,
+          status: updated.status,
+          purchase_payments: updated.purchase_payments,
+        }));
+      }
+
+      await loadPurchases();
+    } catch (err) {
+      toast.error("No se pudo agregar el pago", {
+        description: err.message,
+      });
+    } finally {
+      setCompleteAddingPayment(false);
+    }
+  };
+
+  const handleAddCompleteSerials = async () => {
+    if (!completeActiveItem) return;
+    const identifiers = parseIdentifiers(completeSerialText);
+    if (identifiers.length === 0) {
+      return toast.error("Ingresa al menos un IMEI/SN");
+    }
+
+    setCompleteAddingSerials(true);
+    try {
+      const { data, error } = await supabase.rpc("add_purchase_serials", {
+        p_purchase_item_id: completeActiveItem.id,
+        p_identifiers: identifiers,
+      });
+
+      if (error) throw error;
+
+      toast.success(`${data?.inserted || identifiers.length} IMEI/SN agregados`);
+
+      const updatedItem = {
+        ...completeActiveItem,
+        enteredSerials: [
+          ...completeActiveItem.enteredSerials,
+          ...identifiers.map((id) => ({ identifier_value: id })),
+        ],
+        pendingCount: Math.max(completeActiveItem.pendingCount - identifiers.length, 0),
+      };
+      setCompleteItems((prev) =>
+        prev.map((item) =>
+          item.id === completeActiveItem.id ? updatedItem : item
+        )
+      );
+      setCompleteActiveItem(updatedItem);
+      setCompleteSerialText("");
+
+      const { data: purchaseData } = await supabase
+        .from("purchases")
+        .select("id, status")
+        .eq("id", completingPurchase.id)
+        .single();
+
+      if (purchaseData) {
+        setCompletingPurchase((prev) => ({
+          ...prev,
+          status: purchaseData.status,
+        }));
+      }
+
+      await loadPurchases();
+    } catch (err) {
+      toast.error("No se pudieron agregar los IMEIs", {
+        description: err.message,
+      });
+    } finally {
+      setCompleteAddingSerials(false);
+    }
+  };
+
   const getPurchaseStatusBadge = (status) => {
     if (status === "cancelled") {
       return (
@@ -1008,9 +816,16 @@ const PurchasesConfig = () => {
         </Badge>
       );
     }
+    if (status === "completed") {
+      return (
+        <Badge className="border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-50">
+          COMPLETADA
+        </Badge>
+      );
+    }
     return (
-      <Badge className="border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-50">
-        ACTIVA
+      <Badge className="border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-50">
+        INCOMPLETA
       </Badge>
     );
   };
@@ -1024,13 +839,6 @@ const PurchasesConfig = () => {
       .toLowerCase()
       .trim();
     return name.includes(searchVariant.toLowerCase());
-  });
-
-  const filteredEditVariants = variants.filter((variant) => {
-    const name = `${variant.products?.name || ""} ${variant.variant_name || ""} ${variant.color || ""}`
-      .toLowerCase()
-      .trim();
-    return name.includes(editSearchVariant.toLowerCase());
   });
 
   return (
@@ -1109,11 +917,11 @@ const PurchasesConfig = () => {
               </div>
               <div className="grid gap-1">
                 <Label htmlFor="purchase-paid" className="text-xs text-muted-foreground">
-                  Pagado equiv. ARS
+                  Pagado
                 </Label>
                 <Input
                   id="purchase-paid"
-                  value={formatARS(totalPaid)}
+                  value={totalPaid > 0 ? formatARS(totalPaid) : "Sin pagos"}
                   readOnly
                 />
               </div>
@@ -1323,7 +1131,7 @@ const PurchasesConfig = () => {
               <div>
                 <h4 className="text-sm font-medium">Pagos de la compra</h4>
                 <p className="text-xs text-muted-foreground">
-                  Distribui el total entre una o mas cuentas, como en ventas.
+                  Opcional. Podes agregar pagos ahora o completarlos despues desde el historial.
                 </p>
               </div>
               <Button type="button" variant="outline" size="sm" onClick={handleAddPayment}>
@@ -1331,6 +1139,11 @@ const PurchasesConfig = () => {
                 Agregar pago
               </Button>
             </div>
+            {payments.filter(p => p.account_id || p.amount).length === 0 && (
+              <div className="text-xs text-muted-foreground italic">
+                Sin pagos registrados. Se podran agregar despues.
+              </div>
+            )}
             {payments.map((payment, index) => (
               <div key={index} className="space-y-3 rounded-md border bg-muted/40 p-3">
                 <div className="flex items-center gap-2">
@@ -1379,17 +1192,6 @@ const PurchasesConfig = () => {
                       handleUpdatePayment(index, "amount", e.target.value)
                     }
                   />
-                  {index === payments.length - 1 && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={!payment.account_id}
-                      onClick={() => fillRemainingPayment(index)}
-                    >
-                      Restante
-                    </Button>
-                  )}
                 </div>
                 <div className="text-xs text-muted-foreground">
                   Equivale a{" "}
@@ -1410,9 +1212,6 @@ const PurchasesConfig = () => {
                 </div>
               </div>
             ))}
-            <div className="text-xs text-muted-foreground">
-              Diferencia equiv. ARS: {formatARS(totalAmountArs - totalPaid)}
-            </div>
           </div>
 
           <Button onClick={handleSave}>Guardar compra</Button>
@@ -1557,11 +1356,11 @@ const PurchasesConfig = () => {
                               disabled={p.status === "cancelled"}
                               onClick={(event) => {
                                 event.stopPropagation();
-                                openPurchaseEdit(p);
+                                openCompletePurchase(p);
                               }}
                             >
                               <IconEdit className="mr-2 h-4 w-4" />
-                              Editar
+                              Completar
                             </DropdownMenuItem>
                             <DropdownMenuItem
                               disabled={p.status === "cancelled"}
@@ -1602,7 +1401,14 @@ const PurchasesConfig = () => {
           <div className="space-y-2 text-sm">
             <div><strong>Proveedor:</strong> {detailPurchase?.providers?.name || "-"}</div>
             <div><strong>Fecha:</strong> {detailPurchase?.purchase_date || "-"}</div>
-            <div><strong>Estado:</strong> {detailPurchase?.status === "cancelled" ? "Anulada" : "Activa"}</div>
+            <div>
+              <strong>Estado:</strong>{" "}
+              {detailPurchase?.status === "cancelled"
+                ? "Anulada"
+                : detailPurchase?.status === "completed"
+                  ? "Completada"
+                  : "Incompleta"}
+            </div>
             <div>
               <strong>Total:</strong>{" "}
               {detailPurchase?.currency === "USD"
@@ -1674,376 +1480,285 @@ const PurchasesConfig = () => {
       </Dialog>
 
       <Dialog
-        open={editOpen}
+        open={completeOpen}
         onOpenChange={(open) => {
-          setEditOpen(open);
+          setCompleteOpen(open);
           if (!open) {
-            setEditingPurchase(null);
-            setEditItems([]);
-            setEditSearchVariant("");
+            setCompletingPurchase(null);
+            setCompleteItems([]);
+            setCompletePayments([{ account_id: "", amount: "" }]);
+            setCompleteSerialText("");
+            setCompleteActiveItem(null);
           }
         }}
       >
         <DialogContent className="w-[90vw] sm:max-w-4xl max-h-[85svh] overflow-y-auto rounded-2xl p-4 sm:p-6">
           <DialogHeader>
-            <DialogTitle>Editar compra</DialogTitle>
+            <DialogTitle>Completar compra #{completingPurchase?.id}</DialogTitle>
           </DialogHeader>
+
           <div className="space-y-4">
-            <div className="grid gap-3 md:grid-cols-4">
-              <div className="grid gap-1">
-                <Label htmlFor="edit-purchase-date" className="text-xs text-muted-foreground">
-                  Fecha
-                </Label>
-                <Input
-                  id="edit-purchase-date"
-                  type="date"
-                  value={editForm.purchase_date}
-                  onChange={(e) =>
-                    setEditForm((current) => ({
-                      ...current,
-                      purchase_date: e.target.value,
-                    }))
-                  }
-                />
-              </div>
-              <div className="grid gap-1">
-                <Label htmlFor="edit-purchase-provider" className="text-xs text-muted-foreground">
-                  Proveedor
-                </Label>
-                <Select
-                  value={editForm.provider_id}
-                  onValueChange={(value) =>
-                    setEditForm((current) => ({ ...current, provider_id: value }))
-                  }
-                >
-                  <SelectTrigger id="edit-purchase-provider">
-                    <SelectValue placeholder="Proveedor" />
-                  </SelectTrigger>
-                  <SelectContent className="z-[9999]">
-                    {providers.map((provider) => (
-                      <SelectItem key={provider.id} value={String(provider.id)}>
-                        {provider.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid gap-1">
-                <Label htmlFor="edit-purchase-currency" className="text-xs text-muted-foreground">
-                  Moneda
-                </Label>
-                <Select
-                  value={editForm.currency}
-                  onValueChange={(value) =>
-                    setEditForm((current) => ({ ...current, currency: value }))
-                  }
-                >
-                  <SelectTrigger id="edit-purchase-currency">
-                    <SelectValue placeholder="Moneda" />
-                  </SelectTrigger>
-                  <SelectContent className="z-[9999]">
-                    <SelectItem value="ARS">ARS</SelectItem>
-                    <SelectItem value="USD">USD</SelectItem>
-                    <SelectItem value="USDT">USDT</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid gap-1">
-                <Label htmlFor="edit-purchase-total" className="text-xs text-muted-foreground">
-                  Total
-                </Label>
-                <Input
-                  id="edit-purchase-total"
-                  readOnly
-                  value={formatByCurrency(editForm.currency, editTotalAmount)}
-                />
+            <div className="grid gap-3 md:grid-cols-4 text-sm">
+              <div><strong>Proveedor:</strong> {completingPurchase?.providers?.name || "-"}</div>
+              <div><strong>Fecha:</strong> {completingPurchase?.purchase_date || "-"}</div>
+              <div><strong>Estado:</strong> {completingPurchase?.status === "completed" ? "Completada" : completingPurchase?.status === "cancelled" ? "Anulada" : "Incompleta"}</div>
+              <div>
+                <strong>Total:</strong>{" "}
+                {formatByCurrency(completingPurchase?.currency, completingPurchase?.total_amount)}
               </div>
             </div>
 
-            <div className="relative">
-              <Input
-                placeholder="Buscar producto/variante..."
-                value={editSearchVariant}
-                onFocus={() => setEditFocusVariant(true)}
-                onBlur={() => setTimeout(() => setEditFocusVariant(false), 200)}
-                onChange={(e) => setEditSearchVariant(e.target.value)}
-              />
-              {editFocusVariant && editSearchVariant && (
-                <div className="absolute z-[50] mt-1 w-full rounded-md border bg-background shadow">
-                  <div className="max-h-64 overflow-y-auto">
-                    {filteredEditVariants.length > 0 ? (
-                      filteredEditVariants.slice(0, 40).map((variant) => (
-                        <button
-                          type="button"
-                          key={variant.id}
-                          onClick={() => handleAddEditItem(variant)}
-                          className="w-full text-left px-3 py-2 hover:bg-muted"
-                        >
-                          {variant.products?.name} {variant.variant_name} {variant.color}
-                        </button>
-                      ))
-                    ) : (
-                      <div className="px-3 py-2 text-sm text-muted-foreground">
-                        Sin coincidencias
+            {completeLoading && (
+              <div className="text-center text-sm text-muted-foreground py-4">
+                Cargando items...
+              </div>
+            )}
+
+            {!completeLoading && completingPurchase?.status === "completed" && (
+              <div className="rounded-md border border-emerald-200 bg-emerald-50 p-4 text-center">
+                <div className="text-sm font-medium text-emerald-700">Esta compra esta completa</div>
+                <div className="text-xs text-emerald-600 mt-1">
+                  Todos los pagos y IMEIs fueron registrados.
+                </div>
+              </div>
+            )}
+
+            {!completeLoading && completingPurchase?.status !== "completed" && (
+              <>
+                {completeRemainingArs > 0.01 && (
+                  <div className="space-y-3 rounded-md border p-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h4 className="text-sm font-medium">Pagos</h4>
+                        <p className="text-xs text-muted-foreground">
+                          Pagado: {formatARS(completeTotalPaid)} / {formatARS(completingPurchase?.total_amount_ars)}
+                          {" — Restante: "}
+                          <span className="font-medium text-amber-600">{formatARS(completeRemainingArs)}</span>
+                        </p>
                       </div>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="rounded-md border">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Producto</TableHead>
-                    <TableHead>Cantidad</TableHead>
-                    <TableHead>Costo unit.</TableHead>
-                    <TableHead>Subtotal</TableHead>
-                    <TableHead></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {editItems.map((item) => (
-                    <TableRow key={item.variant_id}>
-                      <TableCell>
-                        {item.variant?.products?.name} {item.variant?.variant_name}{" "}
-                        {item.variant?.color}
-                      </TableCell>
-                      <TableCell>
-                        <Input
-                          type="number"
-                          value={item.quantity}
-                          onChange={(e) =>
-                            handleUpdateEditItem(
-                              item.variant_id,
-                              "quantity",
-                              e.target.value
-                            )
-                          }
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Input
-                          type="number"
-                          step="0.01"
-                          value={item.unit_cost}
-                          onChange={(e) =>
-                            handleUpdateEditItem(
-                              item.variant_id,
-                              "unit_cost",
-                              e.target.value
-                            )
-                          }
-                        />
-                      </TableCell>
-                      <TableCell>
-                        {editForm.currency === "USD"
-                          ? `USD ${(Number(item.quantity || 0) * Number(item.unit_cost || 0)).toFixed(2)}`
-                          : editForm.currency === "USDT"
-                            ? formatUSDT(
-                                Number(item.quantity || 0) * Number(item.unit_cost || 0)
-                              )
-                            : formatARS(
-                                Number(item.quantity || 0) * Number(item.unit_cost || 0)
-                              )}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleRemoveEditItem(item.variant_id)}
-                        >
-                          Quitar
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                  {editItems.length === 0 && (
-                    <TableRow>
-                      <TableCell colSpan={5} className="text-center text-muted-foreground">
-                        Agrega productos a la compra.
-                      </TableCell>
-                    </TableRow>
-                  )}
-                </TableBody>
-              </Table>
-            </div>
-
-            <div className="space-y-3 rounded-md border p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h4 className="text-sm font-medium">Pagos de la compra</h4>
-                  <p className="text-xs text-muted-foreground">
-                    Distribui el total entre una o mas cuentas.
-                  </p>
-                </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={handleAddEditPayment}
-                >
-                  <IconPlus className="h-4 w-4" />
-                  Agregar pago
-                </Button>
-              </div>
-              {editPayments.map((payment, index) => (
-                <div key={index} className="space-y-3 rounded-md border bg-muted/40 p-3">
-                  <div className="flex items-center gap-2">
-                    <Select
-                      value={payment.account_id}
-                      onValueChange={(value) =>
-                        handleUpdateEditPayment(index, "account_id", value)
-                      }
-                    >
-                      <SelectTrigger className="flex-1">
-                        <SelectValue placeholder="Cuenta..." />
-                      </SelectTrigger>
-                      <SelectContent className="z-[9999]">
-                        {displayAccounts.length === 0 && (
-                          <SelectItem value="none" disabled>
-                            Sin cuentas disponibles
-                          </SelectItem>
-                        )}
-                        {displayAccounts.map((account) => (
-                          <SelectItem key={account.id} value={String(account.id)}>
-                            {account.name} ({account.currency})
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    {editPayments.length > 1 && (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        onClick={() => handleRemoveEditPayment(index)}
-                      >
-                        <IconTrash className="h-4 w-4" />
-                      </Button>
-                    )}
-                  </div>
-                  <div className="flex items-end gap-2">
-                    <Input
-                      className="flex-1"
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      placeholder={`Monto (${displayAccounts.find((acc) => String(acc.id) === String(payment.account_id || ""))?.currency || "ARS"})`}
-                      value={payment.amount}
-                      onChange={(e) =>
-                        handleUpdateEditPayment(index, "amount", e.target.value)
-                      }
-                    />
-                    {index === editPayments.length - 1 && (
                       <Button
                         type="button"
                         variant="outline"
                         size="sm"
-                        disabled={!payment.account_id}
-                        onClick={() => fillEditRemainingPayment(index)}
+                        onClick={() =>
+                          setCompletePayments((prev) => [
+                            ...prev,
+                            { account_id: "", amount: "" },
+                          ])
+                        }
                       >
-                        Restante
+                        <IconPlus className="h-4 w-4" />
+                        Agregar pago
                       </Button>
+                    </div>
+                    {completePayments.map((payment, index) => (
+                      <div key={index} className="space-y-2 rounded-md border bg-muted/40 p-3">
+                        <div className="flex items-center gap-2">
+                          <Select
+                            value={payment.account_id}
+                            onValueChange={(value) =>
+                              setCompletePayments((prev) =>
+                                prev.map((p, i) =>
+                                  i === index ? { ...p, account_id: value } : p
+                                )
+                              )
+                            }
+                          >
+                            <SelectTrigger className="flex-1">
+                              <SelectValue placeholder="Cuenta..." />
+                            </SelectTrigger>
+                            <SelectContent className="z-[9999]">
+                              {displayAccounts.length === 0 && (
+                                <SelectItem value="none" disabled>
+                                  Sin cuentas disponibles
+                                </SelectItem>
+                              )}
+                              {displayAccounts.map((acc) => (
+                                <SelectItem key={acc.id} value={String(acc.id)}>
+                                  {acc.name} ({acc.currency})
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          {completePayments.length > 1 && (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="icon"
+                              onClick={() =>
+                                setCompletePayments((prev) => {
+                                  if (prev.length === 1) return [{ account_id: "", amount: "" }];
+                                  return prev.filter((_, i) => i !== index);
+                                })
+                              }
+                            >
+                              <IconTrash className="h-4 w-4" />
+                            </Button>
+                          )}
+                        </div>
+                        <div className="flex items-end gap-2">
+                          <Input
+                            className="flex-1"
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            placeholder={`Monto (${displayAccounts.find((a) => String(a.id) === String(payment.account_id || ""))?.currency || "ARS"})`}
+                            value={payment.amount}
+                            onChange={(e) =>
+                              setCompletePayments((prev) =>
+                                prev.map((p, i) =>
+                                  i === index ? { ...p, amount: e.target.value } : p
+                                )
+                              )
+                            }
+                          />
+                          {index === completePayments.length - 1 && (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              disabled={!payment.account_id}
+                              onClick={() => {
+                                const account = displayAccounts.find(
+                                  (a) => String(a.id) === String(payment.account_id)
+                                );
+                                const accountCurrency = account?.currency || "ARS";
+                                const rate = getEffectiveRateForCurrency(
+                                  accountCurrency,
+                                  completingPurchase?.rate_mode || "system",
+                                  completingPurchase?.manual_fx_rate,
+                                  fxRate,
+                                  usdtRate
+                                );
+                                if (accountCurrency !== "ARS" && !rate) {
+                                  toast.error(`No hay cotizacion para ${accountCurrency}`);
+                                  return;
+                                }
+                                const amount =
+                                  accountCurrency === "ARS"
+                                    ? completeRemainingArs
+                                    : Number(completeRemainingArs || 0) / rate;
+                                setCompletePayments((prev) =>
+                                  prev.map((p, i) =>
+                                    i === index
+                                      ? { ...p, amount: String(Number(amount || 0).toFixed(2)) }
+                                      : p
+                                  )
+                                );
+                              }}
+                            >
+                              Restante
+                            </Button>
+                          )}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          Equivale a{" "}
+                          {formatARS(
+                            convertAmountToARS(
+                              payment.amount,
+                              displayAccounts.find(
+                                (a) => String(a.id) === String(payment.account_id || "")
+                              )?.currency || "ARS",
+                              fxRate,
+                              usdtRate
+                            )
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                    <Button
+                      onClick={handleAddCompletePayment}
+                      disabled={completeAddingPayment}
+                    >
+                      {completeAddingPayment ? "Agregando..." : "Guardar pago"}
+                    </Button>
+                  </div>
+                )}
+
+                {completePendingSerials.length > 0 && (
+                  <div className="space-y-3 rounded-md border p-4">
+                    <div>
+                      <h4 className="text-sm font-medium">IMEIs pendientes</h4>
+                      <p className="text-xs text-muted-foreground">
+                        {completePendingSerials.length} producto/s con IMEIs por ingresar
+                      </p>
+                    </div>
+                    {completePendingSerials.map((item) => (
+                      <div
+                        key={item.id}
+                        className={`rounded-md border p-3 cursor-pointer transition-colors ${
+                          completeActiveItem?.id === item.id
+                            ? "border-primary bg-primary/5"
+                            : "bg-muted/40 hover:bg-muted/60"
+                        }`}
+                        onClick={() => setCompleteActiveItem(item)}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="text-sm font-medium">
+                            {item.product_variants?.products?.name}{" "}
+                            {item.product_variants?.variant_name}{" "}
+                            {item.product_variants?.color}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {item.enteredSerials?.length || 0} / {item.quantity} IMEIs
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+
+                    {completeActiveItem && (
+                      <div className="space-y-2 rounded-md border bg-muted/20 p-3">
+                        <div className="text-xs text-muted-foreground">
+                          Agregar IMEIs para{" "}
+                          <strong>
+                            {completeActiveItem.product_variants?.products?.name}{" "}
+                            {completeActiveItem.product_variants?.variant_name}
+                          </strong>
+                          {" — Pendientes: "}
+                          {completeActiveItem.pendingCount}
+                        </div>
+                        <Textarea
+                          placeholder={`Pega los ${completeActiveItem.pendingCount} IMEIs pendientes, uno por linea`}
+                          value={completeSerialText}
+                          onChange={(e) => setCompleteSerialText(e.target.value)}
+                          rows={4}
+                        />
+                        <div className="text-xs text-muted-foreground">
+                          Cargados: {parseIdentifiers(completeSerialText).length} /{" "}
+                          {completeActiveItem.pendingCount}
+                        </div>
+                        <Button
+                          onClick={handleAddCompleteSerials}
+                          disabled={
+                            completeAddingSerials ||
+                            parseIdentifiers(completeSerialText).length === 0
+                          }
+                          size="sm"
+                        >
+                          {completeAddingSerials ? "Agregando..." : "Guardar IMEIs"}
+                        </Button>
+                      </div>
                     )}
                   </div>
-                  <div className="text-xs text-muted-foreground">
-                    Equivale a{" "}
-                    {formatARS(
-                      convertAmountToARS(
-                        payment.amount,
-                        displayAccounts.find(
-                          (acc) => String(acc.id) === String(payment.account_id || "")
-                        )?.currency || "ARS",
-                        editForm.rate_mode === "manual"
-                          ? resolveManualRate("USD", editForm.manual_fx_rate)
-                          : fxRate,
-                        editForm.rate_mode === "manual"
-                          ? resolveManualRate("USDT", editForm.manual_fx_rate)
-                          : usdtRate
-                      )
-                    )}
+                )}
+
+                {completeRemainingArs <= 0.01 && completePendingSerials.length === 0 && (
+                  <div className="rounded-md border border-emerald-200 bg-emerald-50 p-4 text-center">
+                    <div className="text-sm font-medium text-emerald-700">
+                      Todo completado
+                    </div>
+                    <div className="text-xs text-emerald-600 mt-1">
+                      Todos los pagos e IMEIs fueron registrados.
+                    </div>
                   </div>
-                </div>
-              ))}
-              <div className="text-xs text-muted-foreground">
-                Diferencia equiv. ARS: {formatARS(editTotalAmountArs - editTotalPaid)}
-              </div>
-            </div>
-
-            <div className="grid gap-1">
-              <Label htmlFor="edit-purchase-notes" className="text-xs text-muted-foreground">
-                Notas
-              </Label>
-              <Textarea
-                id="edit-purchase-notes"
-                placeholder="Notas"
-                value={editForm.notes}
-                onChange={(e) =>
-                  setEditForm((current) => ({ ...current, notes: e.target.value }))
-                }
-              />
-            </div>
-
-            <div className="grid gap-3 rounded-md border p-4 md:grid-cols-3">
-              <div className="grid gap-1">
-                <Label className="text-xs text-muted-foreground">Cotizacion</Label>
-                <Select
-                  value={editForm.rate_mode}
-                  onValueChange={(value) =>
-                    setEditForm((current) => ({
-                      ...current,
-                      rate_mode: value,
-                      manual_fx_rate: value === "manual" ? current.manual_fx_rate : "",
-                    }))
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Cotizacion" />
-                  </SelectTrigger>
-                  <SelectContent className="z-[9999]">
-                    <SelectItem value="system">Cotizacion del sistema</SelectItem>
-                    <SelectItem value="manual">Cotizacion manual</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              {editForm.rate_mode === "manual" && (
-                <div className="grid gap-1">
-                  <Label className="text-xs text-muted-foreground">
-                    1 USD/USDT = ? ARS
-                  </Label>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    placeholder="Cotizacion manual"
-                    value={editForm.manual_fx_rate}
-                    onChange={(e) =>
-                      setEditForm((current) => ({
-                        ...current,
-                        manual_fx_rate: e.target.value,
-                      }))
-                    }
-                  />
-                </div>
-              )}
-              <div className="grid gap-1">
-                <Label className="text-xs text-muted-foreground">Total equiv. ARS</Label>
-                <Input
-                  value={
-                    Number.isFinite(editTotalAmountArs) ? formatARS(editTotalAmountArs) : "-"
-                  }
-                  readOnly
-                />
-              </div>
-            </div>
+                )}
+              </>
+            )}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setEditOpen(false)}>
-              Cancelar
+            <Button variant="outline" onClick={() => setCompleteOpen(false)}>
+              Cerrar
             </Button>
-            <Button onClick={handleSaveEdit}>Guardar cambios</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
