@@ -334,6 +334,8 @@ export default function FinancePage() {
         total_usd,
         fx_rate_used,
         sales_channel_id,
+        sale_type,
+        trade_in_data,
         sale_items(
           id,
           quantity,
@@ -462,8 +464,14 @@ export default function FinancePage() {
         };
       }
 
-      const income =
-        saleAccreditedIncome[sale.id] ?? Number(sale.total_usd || 0);
+      const tradeInUsd = sale.sale_type === "canje" && sale.trade_in_data
+        ? Number(sale.trade_in_data.amount_usd || 0) : 0;
+      const baseIncome = saleAccreditedIncome[sale.id] != null
+        ? Number(saleAccreditedIncome[sale.id])
+        : Number(sale.total_usd || 0);
+      const income = saleAccreditedIncome[sale.id] != null
+        ? baseIncome + tradeInUsd
+        : baseIncome;
       monthlyData[monthKey].totalSales += income;
 
       sale.sale_items?.forEach((item) => {
@@ -501,7 +509,7 @@ export default function FinancePage() {
 
     let salesQuery = supabase
       .from("sales")
-      .select(`id,sale_date,total_usd,fx_rate_used,seller_id,sales_channels(name),sale_items(product_name,variant_name,quantity,usd_price,cost_price_usd,subtotal_usd,commission_pct,commission_fixed)`)
+      .select(`id,sale_date,total_usd,fx_rate_used,seller_id,sale_type,trade_in_data,sales_channels(name),sale_items(product_name,variant_name,quantity,usd_price,cost_price_usd,subtotal_usd,commission_pct,commission_fixed)`)
       .eq("status", "vendido")
       .is("voided_at", null)
       .gte("sale_date", monthStart)
@@ -632,10 +640,17 @@ export default function FinancePage() {
           return sum;
         }, 0);
       }
+      const tradeInUsd = sale.sale_type === "canje" && sale.trade_in_data
+        ? Number(sale.trade_in_data.amount_usd || 0) : 0;
+      const baseAccredited = saleAccreditedIncome[sale.id] != null
+        ? Number(saleAccreditedIncome[sale.id])
+        : Number(sale.total_usd || 0);
       return {
         ...sale,
-        accredited_total_usd:
-          saleAccreditedIncome[sale.id] ?? Number(sale.total_usd || 0),
+        accredited_total_usd: saleAccreditedIncome[sale.id] != null
+          ? baseAccredited + tradeInUsd
+          : baseAccredited,
+        trade_in_usd: tradeInUsd,
         income_pending: !saleAccreditedIncome[sale.id] && Boolean(saleHasPendingMovements[sale.id]),
         commission_usd: commissionUsd,
       };
@@ -669,7 +684,7 @@ export default function FinancePage() {
       let salesQuery = supabase
         .from("sales")
         .select(
-          `id,sale_date,total_usd,fx_rate_used,seller_id,sales_channels(name),sale_items(product_name,variant_name,quantity,usd_price,cost_price_usd,subtotal_usd,commission_pct,commission_fixed)`,
+          `id,sale_date,total_usd,fx_rate_used,seller_id,sale_type,trade_in_data,sales_channels(name),sale_items(product_name,variant_name,quantity,usd_price,cost_price_usd,subtotal_usd,commission_pct,commission_fixed)`,
         )
         .eq("status", "vendido")
         .is("voided_at", null)
@@ -799,10 +814,17 @@ export default function FinancePage() {
             return sum;
           }, 0);
         }
+        const tradeInUsd = sale.sale_type === "canje" && sale.trade_in_data
+          ? Number(sale.trade_in_data.amount_usd || 0) : 0;
+        const baseAccredited = saleAccreditedIncome[sale.id] != null
+          ? Number(saleAccreditedIncome[sale.id])
+          : Number(sale.total_usd || 0);
         return {
           ...sale,
-          accredited_total_usd:
-            saleAccreditedIncome[sale.id] ?? Number(sale.total_usd || 0),
+          accredited_total_usd: saleAccreditedIncome[sale.id] != null
+            ? baseAccredited + tradeInUsd
+            : baseAccredited,
+          trade_in_usd: tradeInUsd,
           income_pending: !saleAccreditedIncome[sale.id] && Boolean(saleHasPendingMovements[sale.id]),
           commission_usd: commissionUsd,
         };
@@ -1664,6 +1686,11 @@ export default function FinancePage() {
                             title={labels}
                           >
                             {labels || "-"}
+                            {sale.sale_type === "canje" && (
+                              <Badge variant="outline" className="ml-1 text-[10px] border-amber-300 bg-amber-50 text-amber-700">
+                                Canje
+                              </Badge>
+                            )}
                           </TableCell>
                           <TableCell>
                             {sale.sales_channels?.name || "-"}

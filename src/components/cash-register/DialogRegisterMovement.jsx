@@ -129,7 +129,10 @@ export default function DialogRegisterMovement({
 
     if (rateMode === "manual") {
       const manual = Number(manualRate || 0);
-      return manual > 0 ? manual : null;
+      if (manual <= 0) return null;
+      if (fromCurrency === "USD" || fromCurrency === "USDT") return manual;
+      if (toCurrency === "USD" || toCurrency === "USDT") return 1 / manual;
+      return manual;
     }
 
     // System rate
@@ -528,7 +531,9 @@ export default function DialogRegisterMovement({
               </div>
               {exchangeRate && (
                 <div className="text-xs text-muted-foreground">
-                  1 {selectedAccount.currency} = {exchangeRate.toFixed(4)} {selectedDestination.currency}
+                  {rateMode === "manual"
+                    ? `1 USD = ${manualRate} ARS (tasa ingresada)`
+                    : `1 ${selectedAccount.currency} = ${exchangeRate.toFixed(4)} ${selectedDestination.currency}`}
                 </div>
               )}
               {convertedAmount !== null && (

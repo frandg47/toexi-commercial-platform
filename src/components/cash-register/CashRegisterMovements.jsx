@@ -110,7 +110,7 @@ function InlineView({ movements }) {
               }`}
             >
               {isIncome ? "+" : "\u2212"}
-              {formatCurrency(m.amount, m.currency)}
+              {formatCurrency(m.net_amount || m.amount, m.currency)}
             </span>
           </div>
         );
@@ -168,7 +168,7 @@ function DialogView({ movements, onVoidSale }) {
                   }`}
                 >
                   {isIncome ? "+" : "\u2212"}
-                  {formatCurrency(m.amount, m.currency)}
+                  {formatCurrency(m.net_amount || m.amount, m.currency)}
                   <span className="text-[10px] text-muted-foreground ml-1">{m.currency || "ARS"}</span>
                 </TableCell>
                 {onVoidSale && (

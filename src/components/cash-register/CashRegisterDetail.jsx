@@ -201,7 +201,7 @@ export default function CashRegisterDetail({ register, open, onOpenChange }) {
                         )}
                       </TableCell>
                       <TableCell className={`text-right font-medium ${isIncome ? "text-green-600" : "text-red-600"}`}>
-                        {isIncome ? "+" : "−"}{formatCurrency(m.amount, m.currency)}
+                        {isIncome ? "+" : "−"}{formatCurrency(m.net_amount || m.amount, m.currency)}
                         <span className="text-[10px] text-muted-foreground ml-1">{m.currency || "ARS"}</span>
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground max-w-[200px] truncate">
