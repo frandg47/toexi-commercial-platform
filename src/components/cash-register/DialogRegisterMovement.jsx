@@ -150,9 +150,9 @@ export default function DialogRegisterMovement({
     return parsed * exchangeRate;
   }, [type, amount, exchangeRate]);
 
-  // Check same currency for transfer
+  // Check same currency for transfer and deposit
   const isSameCurrency = useMemo(() => {
-    if (type !== "transfer") return true;
+    if (type !== "transfer" && type !== "deposit") return true;
     if (!selectedAccount || !selectedDestination) return false;
     return selectedAccount.currency === selectedDestination.currency;
   }, [type, selectedAccount, selectedDestination]);
@@ -215,6 +215,10 @@ export default function DialogRegisterMovement({
         toast.error("Seleccioná la cuenta destino");
         return;
       }
+      if (!isSameCurrency) {
+        toast.error("Las cuentas deben ser de la misma moneda");
+        return;
+      }
 
       // Create cash register movement (expense from caja)
       const result = await onConfirm(
@@ -249,7 +253,7 @@ export default function DialogRegisterMovement({
           account_id: Number(destinationAccountId),
           type: "income",
           amount: parsed,
-          currency: selectedAccount.currency,
+          currency: selectedDestination.currency,
           related_table: "cash_register",
            related_id: registerId,
            operation_id: operationId,
@@ -386,7 +390,7 @@ export default function DialogRegisterMovement({
     const parsed = Number(amount || 0);
     if (parsed <= 0) return false;
 
-    if (type === "deposit") return !!destinationAccountId;
+    if (type === "deposit") return !!destinationAccountId && isSameCurrency;
     if (type === "transfer") return !!destinationAccountId && isSameCurrency;
     if (type === "exchange") return !!destinationAccountId && !!exchangeRate;
     return true;
@@ -497,8 +501,8 @@ export default function DialogRegisterMovement({
             </div>
           )}
 
-          {/* Same currency warning for transfer */}
-          {type === "transfer" && !isSameCurrency && selectedAccount && selectedDestination && (
+          {/* Same currency warning for transfer and deposit */}
+          {(type === "transfer" || type === "deposit") && !isSameCurrency && selectedAccount && selectedDestination && (
             <div className="rounded-md border border-red-200 bg-red-50 p-2 text-sm text-red-600">
               Las cuentas deben ser de la misma moneda ({selectedAccount.currency} ≠ {selectedDestination.currency})
             </div>
