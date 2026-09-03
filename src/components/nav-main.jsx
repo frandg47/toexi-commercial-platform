@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import { SidebarGroup, SidebarGroupContent, SidebarMenu, SidebarMenuItem, } from "@/components/ui/sidebar";
+import { SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarMenu, SidebarMenuItem, } from "@/components/ui/sidebar";
 import { IconCirclePlusFilled, IconChevronDown, IconInfoCircle, } from "@tabler/icons-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -50,29 +50,66 @@ export function NavMain({
         )}
 
         {/* Links */}
-        <SidebarMenu>
-          {items.map((item) =>
-            item.items ? (
-              <DropMenu key={item.title} item={item} />
-            ) : (
-              <SidebarMenuItem key={item.title}>
-                <NavLink
-                  to={item.url}
-                  end
-                  className={({ isActive }) =>
-                    `flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors
-                     ${isActive ? "bg-primary text-primary-foreground shadow-sm" :
-                      "hover:bg-muted hover:text-foreground"}
-                     ${collapsed ? "justify-center px-2" : ""}`
-                  }
-                >
-                  {item.icon && <item.icon className="h-5 w-5" />}
-                  {!collapsed && <span>{item.title}</span>}
-                </NavLink>
-              </SidebarMenuItem>
-            )
-          )}
-        </SidebarMenu>
+        {items.map((item, index) => {
+          if (item.groupLabel) {
+            return (
+              <div key={`group-${item.groupLabel}-${index}`}>
+                {!collapsed && (
+                  <SidebarGroupLabel className="mt-4 mb-1 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                    {item.groupLabel}
+                  </SidebarGroupLabel>
+                )}
+                <SidebarMenu>
+                  {item.items.map((sub) =>
+                    sub.items ? (
+                      <DropMenu key={sub.title} item={sub} />
+                    ) : (
+                      <SidebarMenuItem key={sub.title}>
+                        <NavLink
+                          to={sub.url}
+                          end
+                          className={({ isActive }) =>
+                            `flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors
+                             ${isActive ? "bg-primary text-primary-foreground shadow-sm" :
+                              "hover:bg-muted hover:text-foreground"}
+                             ${collapsed ? "justify-center px-2" : ""}`
+                          }
+                        >
+                          {sub.icon && <sub.icon className="h-5 w-5" />}
+                          {!collapsed && <span>{sub.title}</span>}
+                        </NavLink>
+                      </SidebarMenuItem>
+                    )
+                  )}
+                </SidebarMenu>
+              </div>
+            );
+          }
+
+          return (
+            <SidebarMenu key={`item-${item.title || index}`}>
+              {item.items ? (
+                <DropMenu item={item} />
+              ) : (
+                <SidebarMenuItem>
+                  <NavLink
+                    to={item.url}
+                    end
+                    className={({ isActive }) =>
+                      `flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors
+                       ${isActive ? "bg-primary text-primary-foreground shadow-sm" :
+                        "hover:bg-muted hover:text-foreground"}
+                       ${collapsed ? "justify-center px-2" : ""}`
+                    }
+                  >
+                    {item.icon && <item.icon className="h-5 w-5" />}
+                    {!collapsed && <span>{item.title}</span>}
+                  </NavLink>
+                </SidebarMenuItem>
+              )}
+            </SidebarMenu>
+          );
+        })}
       </SidebarGroupContent>
     </SidebarGroup>
   );

@@ -10,7 +10,6 @@ import {
   IconUsers,
   IconSettings,
   IconMedal,
-  IconUsersGroup,
   IconReport,
   IconCash,
   IconCalculator,
@@ -19,6 +18,12 @@ import {
   IconBuildingBank,
   IconTool,
   IconArrowsExchange,
+  IconUserDollar,
+  IconShoppingBag,
+  IconFileDollar,
+  IconTruck,
+  IconUsersGroup,
+  IconUserPlus,
 } from "@tabler/icons-react";
 
 import SheetNewSale from "@/components/SheetNewSale";
@@ -28,20 +33,47 @@ import { useAuth } from "@/context/AuthContextProvider";
 import { useCashRegister } from "@/hooks/useCashRegister";
 
 const navMainBase = [
-  { title: "Panel principal", url: "/dashboard", icon: IconDashboard },
-  { title: "Productos", url: "/dashboard/products", icon: IconReport },
-  { title: "Pedidos", url: "/dashboard/orders", icon: IconShoppingCart },
-  { title: "Ventas", url: "/dashboard/sales", icon: IconChartBar },
-  { title: "Clientes", url: "/dashboard/customers", icon: IconUsers },
-  { title: "Equipo", url: "/dashboard/team", icon: IconUsersGroup },
-  { title: "Top Vendedores", url: "/dashboard/top-sellers", icon: IconMedal },
-  { title: "Cotizador", url: "/dashboard/quick-payment-calculator", icon: IconCalculator },
-  { title: "Caja", url: "/dashboard/cash-register", icon: IconCash, external: true },
-  { title: "Gastos", url: "/dashboard/expenses", icon: IconReceipt },
-  { title: "Postventa", url: "/dashboard/after-sales", icon: IconTool },
-  { title: "Finanzas", url: "/dashboard/finance", icon: IconBuildingBank },
-  { title: "Movimientos", url: "/dashboard/movements", icon: IconCash },
-  // { title: "Reportes", url: "/dashboard/reports", icon: IconChartBar },
+  {
+    groupLabel: "Principal",
+    items: [
+      { title: "Panel principal", url: "/dashboard", icon: IconDashboard },
+      { title: "Productos", url: "/dashboard/products", icon: IconReport },
+      { title: "Pedidos", url: "/dashboard/orders", icon: IconShoppingCart },
+      { title: "Ventas", url: "/dashboard/sales", icon: IconChartBar },
+    ],
+  },
+  {
+    groupLabel: "Contactos",
+    items: [
+      {title: "Equipo", url: "/dashboard/team", icon: IconUsersGroup },
+      { title: "Clientes", url: "/dashboard/customers", icon: IconUserPlus },
+      { title: "Vendedores", url: "/dashboard/top-sellers", icon: IconUserDollar },
+      { title: "Proveedores", url: "/dashboard/providers", icon: IconTruck },
+    ],
+  },
+  {
+    groupLabel: "Calculadora",
+    items: [
+      { title: "Cotizador", url: "/dashboard/quick-payment-calculator", icon: IconCalculator },
+      { title: "Presupuestos", url: "/dashboard/payment-calculator", icon: IconFileDollar },
+    ],
+  },
+  {
+    groupLabel: "Operaciones",
+    items: [
+      { title: "Caja", url: "/dashboard/cash-register", icon: IconCash, external: true },
+      { title: "Compras", url: "/dashboard/purchases", icon: IconShoppingBag },
+      { title: "Postventa", url: "/dashboard/after-sales", icon: IconTool },
+    ],
+  },
+  {
+    groupLabel: "Administración",
+    items: [
+      { title: "Finanzas", url: "/dashboard/finance", icon: IconBuildingBank },
+      { title: "Pagos", url: "/dashboard/sellers-payments", icon: IconCash },
+      { title: "Gastos", url: "/dashboard/expenses", icon: IconReceipt },
+    ],
+  },
 ];
 
 const navSecondary = [
@@ -65,25 +97,21 @@ export default function DashboardLayout() {
     "/dashboard/orders": "Pedidos",
     "/dashboard/customers": "Clientes",
     "/dashboard/team": "Equipo",
-    "/dashboard/top-sellers": "Top Vendedores",
+    "/dashboard/top-sellers": "Vendedores",
     "/dashboard/settings": "Configuracion",
-    "/dashboard/settings/sellers-payments": "Pagos a Vendedores",
-    "/dashboard/settings/comission": "Comisiones",
-    "/dashboard/settings/fx-rates": "Cotizaciones",
+    "/dashboard/sellers-payments": "Pagos a Vendedores",
+    "/dashboard/comission": "Comisiones",
+    "/dashboard/fx-rates": "Cotizaciones",
     "/dashboard/sales": "Ventas",
     "/dashboard/payment-calculator": "Presupuestos",
     "/dashboard/expenses": "Gastos",
     "/dashboard/after-sales": "Postventa",
     "/dashboard/finance": "Finanzas",
     "/dashboard/movements": "Movimientos",
-    // "/dashboard/reports": "Reportes",
-    "/dashboard/settings/expenses": "Gastos",
-    "/dashboard/settings/movements": "Movimientos",
   };
 
   const navMain = navMainBase.filter((item) => {
-    if (item.url === "/dashboard/finance") return isOwner;
-    if (item.url === "/dashboard/movements") return isOwner;
+    if (item.groupLabel === "Administración" && !isOwner) return false;
     return true;
   });
   const tituloActual = pageTitles[location.pathname] || "Dashboard";

@@ -151,7 +151,7 @@ export default function App() {
             <Route path="team" element={<TeamPage />} />
             <Route path="orders" element={<OrdersPage />} />
             <Route path="top-sellers" element={<TopSellersPage />} />
-            <Route path="settings/sellers-payments" element={<SellersPayments />} />
+            <Route path="sellers-payments" element={<SellersPayments />} />
             <Route path="payment-calculator" element={<PaymentCalculator />} />
             <Route
               path="quick-payment-calculator"
@@ -160,8 +160,8 @@ export default function App() {
             <Route path="expenses" element={<ExpensesPage />} />
             <Route path="after-sales" element={<AftersalesPage />} />
             <Route path="finance" element={<FinancePage />} />
-            <Route path="reports" element={<ReportsPage />} />
-            <Route path="settings/expenses" element={<ExpensesPage />} />
+            <Route path="settings/reports" element={<ReportsPage />} />
+            <Route path="expenses" element={<ExpensesPage />} />
 
             {/* âš™ï¸ CONFIGURACIONES */}
             <Route
@@ -180,14 +180,14 @@ export default function App() {
             />
             <Route path="settings/inventory" element={<InventoryConfig />} />
             <Route path="sales" element={<SalesConfig />} />
-            <Route path="settings/providers" element={<ProvidersConfig />} />
-            <Route path="settings/purchases" element={<PurchasesConfig />} />
+            <Route path="providers" element={<ProvidersConfig />} />
+            <Route path="purchases" element={<PurchasesConfig />} />
             <Route path="settings/accounts" element={<AccountsConfig />} />
             <Route
               path="settings/historical-cash-register"
               element={<CashRegisterHistoryPanel />} />
             <Route
-              path="movements"
+              path="settings/movements"
               element={
                 <ProtectedRoute allowedRoles={["owner"]}>
                   <MovementsConfig />

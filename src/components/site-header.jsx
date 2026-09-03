@@ -14,7 +14,7 @@ const TITULOS = {
   customers: "Clientes",
   team: "Equipo",
   orders: "Pedidos",
-  "top-sellers": "Top Vendedores",
+  "top-sellers": "Vendedores",
 
   // ⚙️ Config
   settings: "Configuraciones",
