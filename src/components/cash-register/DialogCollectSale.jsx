@@ -31,6 +31,7 @@ import {
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabaseClient";
 import { generateSalePDF } from "@/utils/generateSalePDF";
+import { getReceivedItems, getTotalReceivedArs } from "@/utils/tradeInHelpers";
 
 export default function DialogCollectSale({ open, onOpenChange, sale, onConfirm, loading, exchangeRate, usdtRate, tradeInCredit = 0, virtualAccounts = [], cajaAccounts = [] }) {
   const [paymentMethods, setPaymentMethods] = useState([]);
@@ -435,17 +436,23 @@ export default function DialogCollectSale({ open, onOpenChange, sale, onConfirm,
               <span className="text-muted-foreground">Cliente:</span>
               <span className="font-medium">{(sale.customers?.name || "Sin cliente").toUpperCase()}{sale.customers?.last_name && ` ${sale.customers.last_name.toUpperCase()}`}</span>
             </div>
-            {(sale?.sale_type === "canje" || sale?.sale_type === "warranty") && sale?.trade_in_data && (
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">{sale?.sale_type === "canje" ? "Canje:" : "Garantía:"}</span>
-                <span className="font-medium text-green-600">
-                  {sale.trade_in_data.product_name} {sale.trade_in_data.variant_name}
-                  {sale.trade_in_data.imei && ` (${sale.trade_in_data.imei})`}
-                  {" — "}
-                  {formatARS(sale.trade_in_data.amount_ars)}
-                </span>
-              </div>
-            )}
+            {(sale?.sale_type === "canje" || sale?.sale_type === "warranty") && sale?.trade_in_data && (() => {
+              const items = getReceivedItems(sale.trade_in_data);
+              const total = getTotalReceivedArs(sale.trade_in_data);
+              return (
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">{sale?.sale_type === "canje" ? "Canje:" : "Garantía:"}</span>
+                  <span className="font-medium text-green-600">
+                    {items.length === 1
+                      ? `${items[0].product_name} ${items[0].variant_name}${items[0].imei ? ` (${items[0].imei})` : ""}`
+                      : `${items.length} producto${items.length > 1 ? "s" : ""} recibido${items.length > 1 ? "s" : ""}`
+                    }
+                    {" — "}
+                    {formatARS(total)}
+                  </span>
+                </div>
+              );
+            })()}
           </div>
 
           {/* Lista de productos */}

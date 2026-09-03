@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -10,7 +9,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { IconHistory, IconRefresh } from "@tabler/icons-react";
+import { Calendar } from "@/components/ui/calendar";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
+import { IconHistory, IconRefresh, IconCalendar } from "@tabler/icons-react";
+import { format, startOfMonth, endOfMonth } from "date-fns";
+import { es } from "date-fns/locale";
 import { toast } from "sonner";
 import CashRegisterHistory from "./CashRegisterHistory";
 import CashRegisterDetail from "./CashRegisterDetail";
@@ -23,9 +26,13 @@ export default function CashRegisterHistoryPanel() {
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
+  const initialDateRange = useMemo(() => {
+    const now = new Date();
+    return { from: startOfMonth(now), to: endOfMonth(now) };
+  }, []);
+
+  const [dateRange, setDateRange] = useState(initialDateRange);
   const [filters, setFilters] = useState({
-    dateFrom: "",
-    dateTo: "",
     userId: "all",
     status: "all",
   });
@@ -49,8 +56,8 @@ export default function CashRegisterHistoryPanel() {
       .order("id", { ascending: false })
       .range(from, to);
 
-    if (filters.dateFrom) query = query.gte("register_date", filters.dateFrom);
-    if (filters.dateTo) query = query.lte("register_date", filters.dateTo);
+    if (dateRange?.from) query = query.gte("register_date", format(dateRange.from, "yyyy-MM-dd"));
+    if (dateRange?.to) query = query.lte("register_date", format(dateRange.to, "yyyy-MM-dd"));
     if (filters.userId !== "all") query = query.eq("user_id", filters.userId);
     if (filters.status !== "all") query = query.eq("status", filters.status);
 
@@ -86,7 +93,7 @@ export default function CashRegisterHistoryPanel() {
     );
     setTotalCount(count || 0);
     setLoading(false);
-  }, [filters, page]);
+  }, [dateRange, filters, page]);
 
   useEffect(() => {
     loadHistory();
@@ -223,46 +230,32 @@ export default function CashRegisterHistoryPanel() {
           </Button>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid gap-3 md:grid-cols-4">
+          <div className="grid gap-3 md:grid-cols-3">
             <div className="space-y-1">
-              <span className="text-xs text-muted-foreground">Desde</span>
-              <Input
-                type="date"
-                value={filters.dateFrom}
-                onChange={(event) =>
-                  updateFilter("dateFrom", event.target.value)
-                }
-              />
+              <span className="text-xs text-muted-foreground">Fecha</span>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    className="flex items-center gap-2 w-full min-w-[220px]"
+                  >
+                    <IconCalendar className="h-4 w-4" />
+                    {dateRange?.from && dateRange?.to
+                      ? `${dateRange.from.toLocaleDateString("es-AR")} - ${dateRange.to.toLocaleDateString("es-AR")}`
+                      : "Filtrar por fecha"}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="p-3" align="start">
+                  <Calendar
+                    mode="range"
+                    selected={dateRange}
+                    onSelect={setDateRange}
+                    locale={es}
+                    initialFocus
+                  />
+                </PopoverContent>
+              </Popover>
             </div>
-            <div className="space-y-1">
-              <span className="text-xs text-muted-foreground">Hasta</span>
-              <Input
-                type="date"
-                value={filters.dateTo}
-                onChange={(event) => updateFilter("dateTo", event.target.value)}
-              />
-            </div>
-            {/* <div className="space-y-1">
-              <span className="text-xs text-muted-foreground">Usuario</span>
-              <Select
-                value={filters.userId}
-                onValueChange={(value) => updateFilter("userId", value)}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Todos los usuarios" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Todos los usuarios</SelectItem>
-                  {users.map((user) => (
-                    <SelectItem key={user.id_auth} value={user.id_auth}>
-                      {[user.name, user.last_name].filter(Boolean).join(" ") ||
-                        user.email ||
-                        user.id_auth}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div> */}
             <div className="space-y-1">
               <span className="text-xs text-muted-foreground">Estado</span>
               <Select

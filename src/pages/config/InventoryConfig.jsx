@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
+import { getReceivedItems } from "@/utils/tradeInHelpers";
 import {
   Select,
   SelectContent,
@@ -1250,9 +1251,12 @@ export default function InventoryConfig() {
                                 <div className="text-xs text-muted-foreground">
                                   {unit.sale?.customers
                                     ? formatCustomerName(unit.sale.customers)
-                                    : unit.sale?.trade_in_data?.product_name
-                                      ? `Recibido: ${unit.sale.trade_in_data.product_name}`
-                                      : "Sin cliente"}
+                                    : (() => {
+                                        const items = getReceivedItems(unit.sale?.trade_in_data);
+                                        return items.length > 0
+                                          ? `Recibido: ${items[0].product_name}`
+                                          : "Sin cliente";
+                                      })()}
                                 </div>
                               </div>
                             ) : (

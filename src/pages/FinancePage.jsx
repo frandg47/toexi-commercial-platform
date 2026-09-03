@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { supabase } from "@/lib/supabaseClient";
 import { useAuth } from "@/context/AuthContextProvider";
+import { getTotalReceivedUsd } from "@/utils/tradeInHelpers";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -465,7 +466,7 @@ export default function FinancePage() {
       }
 
       const tradeInUsd = sale.sale_type === "canje" && sale.trade_in_data
-        ? Number(sale.trade_in_data.amount_usd || 0) : 0;
+        ? getTotalReceivedUsd(sale.trade_in_data) : 0;
       const baseIncome = saleAccreditedIncome[sale.id] != null
         ? Number(saleAccreditedIncome[sale.id])
         : Number(sale.total_usd || 0);
@@ -641,7 +642,7 @@ export default function FinancePage() {
         }, 0);
       }
       const tradeInUsd = sale.sale_type === "canje" && sale.trade_in_data
-        ? Number(sale.trade_in_data.amount_usd || 0) : 0;
+        ? getTotalReceivedUsd(sale.trade_in_data) : 0;
       const baseAccredited = saleAccreditedIncome[sale.id] != null
         ? Number(saleAccreditedIncome[sale.id])
         : Number(sale.total_usd || 0);
@@ -815,7 +816,7 @@ export default function FinancePage() {
           }, 0);
         }
         const tradeInUsd = sale.sale_type === "canje" && sale.trade_in_data
-          ? Number(sale.trade_in_data.amount_usd || 0) : 0;
+          ? getTotalReceivedUsd(sale.trade_in_data) : 0;
         const baseAccredited = saleAccreditedIncome[sale.id] != null
           ? Number(saleAccreditedIncome[sale.id])
           : Number(sale.total_usd || 0);

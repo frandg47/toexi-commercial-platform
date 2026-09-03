@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { getAdminSales } from "../utils/getAdminSales";
+import { getReceivedItems, getTotalReceivedArs } from "@/utils/tradeInHelpers";
 
 import {
     Pagination,
@@ -1480,12 +1481,16 @@ export function SalesList() {
                         {s.status !== "pending" && (
                         <div className="text-sm border rounded p-3 mt-3 bg-muted/40">
                             <strong>Métodos de pago:</strong>
-                            {s.sale_type === "canje" && s.trade_in_data && (
-                                <div className="flex justify-between border-b py-1 text-green-600">
-                                    <span>Crédito canje ({s.trade_in_data.product_name} {s.trade_in_data.variant_name})</span>
-                                    <span>-${Number(s.trade_in_data.amount_ars || 0).toLocaleString("es-AR")}</span>
-                                </div>
-                            )}
+                            {s.sale_type === "canje" && s.trade_in_data && (() => {
+                                const items = getReceivedItems(s.trade_in_data);
+                                const total = getTotalReceivedArs(s.trade_in_data);
+                                return (
+                                    <div className="flex justify-between border-b py-1 text-green-600">
+                                        <span>Crédito canje ({items.length === 1 ? `${items[0].product_name} ${items[0].variant_name}` : `${items.length} producto${items.length > 1 ? "s" : ""}`})</span>
+                                        <span>-${total.toLocaleString("es-AR")}</span>
+                                    </div>
+                                );
+                            })()}
                             {s.payments?.map((p, idx) => (
                                 <div key={idx} className="flex justify-between border-b last:border-0 py-1">
                                     <span>

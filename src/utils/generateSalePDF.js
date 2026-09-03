@@ -1,6 +1,7 @@
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { toast } from "sonner";
+import { getReceivedItems, getTotalReceivedArs, getReceivedFxRate } from "@/utils/tradeInHelpers";
 
 const AR_TIMEZONE = "America/Argentina/Buenos_Aires";
 
@@ -171,29 +172,45 @@ export function generateSalePDF(sale, warrantiesBySale = {}) {
 
     y += 30;
 
-    // Sección canje: producto recibido
+    // Sección canje: producto(s) recibido(s)
     if (isCanje && sale.trade_in_data) {
-      const td = sale.trade_in_data;
-      const canjeLines = 4;
-      doc.setFontSize(11);
-      doc.setDrawColor(128, 0, 128);
-      doc.setLineWidth(0.3);
-      doc.rect(margin, y, 180, canjeLines * 6 + 4);
+      const canjeItems = getReceivedItems(sale.trade_in_data);
+      const canjeFxRate = getReceivedFxRate(sale.trade_in_data);
 
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(10);
-      doc.setTextColor(128, 0, 128);
-      doc.text("PRODUCTO RECIBIDO EN CANJE", margin + 4, y + 6);
+      if (canjeItems.length > 0) {
+        const canjeLines = 4 + canjeItems.length;
+        doc.setFontSize(11);
+        doc.setDrawColor(128, 0, 128);
+        doc.setLineWidth(0.3);
+        doc.rect(margin, y, 180, canjeLines * 6 + 4);
 
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(9);
-      doc.setTextColor(0);
-      doc.text(`Producto: ${td.product_name || ""} ${td.variant_name || ""}`, margin + 4, y + 12);
-      doc.text(`Color: ${td.color || "-"}  |  IMEI: ${td.imei || "-"}`, margin + 4, y + 18);
-      doc.text(`Monto: $ ${Number(td.amount_ars || 0).toLocaleString("es-AR")} ${td.currency || "ARS"}`, margin + 4, y + 24);
-      doc.text(`Cotización: $ ${Number(td.fx_rate_used || 0).toLocaleString("es-AR")}`, margin + 4, y + 30);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(10);
+        doc.setTextColor(128, 0, 128);
+        doc.text(
+          canjeItems.length === 1 ? "PRODUCTO RECIBIDO EN CANJE" : `${canjeItems.length} PRODUCTOS RECIBIDOS EN CANJE`,
+          margin + 4,
+          y + 6
+        );
 
-      y += canjeLines * 6 + 8;
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(9);
+        doc.setTextColor(0);
+        let lineY = y + 12;
+        for (const ci of canjeItems) {
+          const desc = `${ci.product_name || ""} ${ci.variant_name || ""}`;
+          const imeiStr = ci.imei ? ` | IMEI: ${ci.imei}` : "";
+          doc.text(
+            `${desc}${imeiStr}  —  $ ${Number(ci.amount_ars || 0).toLocaleString("es-AR")} ${ci.currency || "ARS"}`,
+            margin + 4,
+            lineY
+          );
+          lineY += 6;
+        }
+        doc.text(`Cotización: $ ${Number(canjeFxRate || 0).toLocaleString("es-AR")}`, margin + 4, lineY);
+
+        y += canjeLines * 6 + 8;
+      }
     }
 
     autoTable(doc, {
@@ -271,7 +288,7 @@ export function generateSalePDF(sale, warrantiesBySale = {}) {
     const hasDiscount = discountAmount > 0;
     const hasSurcharge = surchargeAmount > 0;
 
-    const tradeInCredit = Number(sale.trade_in_credit || sale.trade_in_data?.amount_ars || 0);
+    const tradeInCredit = Number(sale.trade_in_credit || getTotalReceivedArs(sale.trade_in_data));
     const hasTradeIn = isCanje && tradeInCredit > 0;
     const boxHeight = hasTradeIn ? 48 : 40;
 

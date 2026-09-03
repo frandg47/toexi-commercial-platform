@@ -29,7 +29,6 @@ import {
   IconTrash,
   IconUserPlus,
   IconArrowsExchange,
-  IconScan,
 } from "@tabler/icons-react";
 
 const formatARS = (n) =>
@@ -87,7 +86,7 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
   const [focusSeller, setFocusSeller] = useState(false);
   const [dialogCustomerOpen, setDialogCustomerOpen] = useState(false);
 
-  // Step 2: Received product
+  // Step 2: Received products (multi)
   const [searchReceivedVariant, setSearchReceivedVariant] = useState("");
   const [focusReceivedVariant, setFocusReceivedVariant] = useState(false);
   const [selectedReceivedVariant, setSelectedReceivedVariant] = useState(null);
@@ -96,6 +95,7 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
   const [manualFxRate, setManualFxRate] = useState("");
   const [rateMode, setRateMode] = useState("system");
   const [receivedImei, setReceivedImei] = useState("");
+  const [receivedList, setReceivedList] = useState([]);
 
   // Step 3: Products to buy
   const [searchProduct, setSearchProduct] = useState("");
@@ -106,7 +106,7 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
   const [cart, setCart] = useState([]);
   const [notes, setNotes] = useState("");
 
-  // Load data on open (sellers, channels, rates — NOT customers)
+  // Load data on open
   useEffect(() => {
     if (!open) return;
     setStep(1);
@@ -121,6 +121,7 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
     setManualFxRate("");
     setRateMode("system");
     setReceivedImei("");
+    setReceivedList([]);
     setCart([]);
     setNotes("");
 
@@ -143,7 +144,7 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
     load();
   }, [open]);
 
-  // Dynamic customer search (like SheetNewSale)
+  // Dynamic customer search
   useEffect(() => {
     if (!focusCustomer) return;
     const q = searchCustomer.trim();
@@ -160,7 +161,7 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
     fetchCustomers();
   }, [focusCustomer, searchCustomer]);
 
-  // Fetch products for step 3 (dynamic search on focus, like SheetNewSale)
+  // Fetch products for step 3
   useEffect(() => {
     if (step !== 3 || !open || !focusProduct) return;
     const q = searchProduct.trim();
@@ -196,8 +197,6 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
     }
     const timer = setTimeout(async () => {
       const q = searchReceivedVariant;
-
-      // Query 1: Find products matching the search term
       const { data: matchingProducts } = await supabase
         .from("products")
         .select("id")
@@ -207,8 +206,6 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
 
       const productIds = (matchingProducts || []).map((p) => p.id);
 
-      // Query 2a: Variants from matching products
-      // Query 2b: Variants matching by variant_name directly
       const [byProduct, byVariantName] = await Promise.all([
         productIds.length > 0
           ? supabase
@@ -226,7 +223,6 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
           .limit(40),
       ]);
 
-      // Merge and deduplicate
       const seen = new Set();
       const merged = [];
       for (const v of [...(byProduct.data || []), ...(byVariantName.data || [])]) {
@@ -235,13 +231,12 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
           merged.push(v);
         }
       }
-
       setVariants(merged.slice(0, 40));
     }, 300);
     return () => clearTimeout(timer);
   }, [searchReceivedVariant]);
 
-  // Search variants for step 3 (like SheetNewSale variant search)
+  // Search variants for step 3
   const [buyVariants, setBuyVariants] = useState([]);
   useEffect(() => {
     if (step !== 3 || !selectedProduct) {
@@ -262,7 +257,7 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
     return () => clearTimeout(timer);
   }, [searchVariant, selectedProduct, step, focusVariant]);
 
-  // Effective FX rate
+  // Effective FX rate for the current form entry
   const effectiveRate = useMemo(() => {
     if (rateMode === "manual" && manualFxRate) return Number(manualFxRate);
     if (receivedCurrency === "ARS") return exchangeRate;
@@ -270,22 +265,19 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
     return exchangeRate;
   }, [rateMode, manualFxRate, receivedCurrency, exchangeRate, usdtRate]);
 
-  // Received value in USD
-  const receivedUsd = useMemo(() => {
-    const amt = Number(receivedAmount) || 0;
-    if (receivedCurrency === "USD" || receivedCurrency === "USDT") return amt;
-    if (effectiveRate > 0) return amt / effectiveRate;
-    return 0;
-  }, [receivedAmount, receivedCurrency, effectiveRate]);
-
-  // Received value in ARS
-  const receivedArs = useMemo(() => {
+  // Compute ARS value for current form entry
+  const currentEntryArs = useMemo(() => {
     const amt = Number(receivedAmount) || 0;
     if (receivedCurrency === "ARS") return amt;
     if (receivedCurrency === "USD" && exchangeRate) return amt * exchangeRate;
     if (receivedCurrency === "USDT" && usdtRate) return amt * usdtRate;
     return amt;
   }, [receivedAmount, receivedCurrency, exchangeRate, usdtRate]);
+
+  // Total received across all items in the list
+  const totalReceivedArs = useMemo(() => {
+    return receivedList.reduce((sum, r) => sum + r.amountArs, 0);
+  }, [receivedList]);
 
   // Cart totals
   const cartTotalUsd = useMemo(() => {
@@ -298,12 +290,55 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
     return cartTotalUsd * (exchangeRate || 0);
   }, [cartTotalUsd, exchangeRate]);
 
-  // Difference (positive = customer owes, negative = store owes customer, 0 = exact)
   const difference = useMemo(() => {
-    return cartTotalArs - receivedArs;
-  }, [cartTotalArs, receivedArs]);
+    return cartTotalArs - totalReceivedArs;
+  }, [cartTotalArs, totalReceivedArs]);
 
-  // Helpers
+  // Add current form entry to receivedList
+  const handleAddReceived = () => {
+    if (!selectedReceivedVariant) return toast.error("Seleccioná el producto recibido");
+    if (!receivedAmount || Number(receivedAmount) <= 0) return toast.error("Ingresá el monto cotizado");
+
+    const isSerial = selectedReceivedVariant.products?.inventory_tracking_mode === "serial";
+    if (isSerial && (!receivedImei || !receivedImei.trim())) {
+      return toast.error("El producto es serializado, ingresá el IMEI/SN");
+    }
+
+    const duplicateImei = isSerial && receivedList.some(
+      (r) => r.imei && normalizeIdentifier(r.imei) === normalizeIdentifier(receivedImei)
+    );
+    if (duplicateImei) {
+      return toast.error("Ese IMEI ya fue agregado");
+    }
+
+    const rateUsed = effectiveRate || 0;
+    const amountArs = currentEntryArs;
+
+    setReceivedList((prev) => [
+      ...prev,
+      {
+        id: Date.now(),
+        variant: selectedReceivedVariant,
+        amount: Number(receivedAmount),
+        currency: receivedCurrency,
+        imei: isSerial ? receivedImei.trim() : null,
+        amountArs,
+        fxRateUsed: rateUsed,
+      },
+    ]);
+
+    setSelectedReceivedVariant(null);
+    setSearchReceivedVariant("");
+    setReceivedAmount("");
+    setReceivedImei("");
+    toast.success("Producto agregado al canje");
+  };
+
+  const removeFromReceivedList = (itemId) => {
+    setReceivedList((prev) => prev.filter((r) => r.id !== itemId));
+  };
+
+  // Helpers for cart (step 3)
   const addToCart = (variant) => {
     const existing = cart.find((c) => c.id === variant.id);
     if (existing) {
@@ -428,14 +463,8 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
   // Submit
   const handleSubmit = async () => {
     if (!selectedCustomer) return toast.error("Seleccioná un cliente");
-    if (!selectedReceivedVariant) return toast.error("Seleccioná el producto recibido");
-    if (!receivedAmount || Number(receivedAmount) <= 0) return toast.error("Ingresá el monto cotizado");
+    if (receivedList.length === 0) return toast.error("Agregá al menos un producto recibido en canje");
     if (cart.length === 0) return toast.error("Agregá al menos un producto a comprar");
-
-    const isSerial = selectedReceivedVariant.products?.inventory_tracking_mode === "serial";
-    if (isSerial && (!receivedImei || !receivedImei.trim())) {
-      return toast.error("El producto recibido es serializado, ingresá el IMEI/SN");
-    }
 
     const missingSerial = cart.find(
       (v) => isSerialTrackedVariant(v) && getVariantQuantity(v) === 0
@@ -457,15 +486,19 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
         inventory_unit_ids: v.inventory_unit_ids || [],
       }));
 
+      const receivedItems = receivedList.map((r) => ({
+        variant_id: r.variant.id,
+        amount_ars: r.amountArs,
+        currency: r.currency,
+        imei: r.imei || null,
+      }));
+
       const { data, error } = await supabase.rpc("create_canje_sale", {
         p_customer_id: selectedCustomer.id,
         p_seller_id: selectedSeller?.id_auth || userId,
         p_sales_channel_id: selectedChannel ? Number(selectedChannel) : null,
-        p_received_variant_id: selectedReceivedVariant.id,
-         p_received_amount_ars: receivedArs,
-        p_received_currency: receivedCurrency,
+        p_received_items: receivedItems,
         p_fx_rate_used: effectiveRate || 0,
-        p_imei: receivedImei || null,
         p_items: items,
         p_notes: notes || null,
       });
@@ -483,6 +516,8 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
     }
   };
 
+  const isSerialCurrent = selectedReceivedVariant?.products?.inventory_tracking_mode === "serial";
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="w-full sm:max-w-md overflow-y-auto">
@@ -492,14 +527,13 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
               <SheetTitle>Plan Canje</SheetTitle>
               <SheetDescription>
                 {step === 1 && "Completá los datos para el canje."}
-                {step === 2 && "Producto recibido en canje."}
+                {step === 2 && "Productos recibidos en canje."}
                 {step === 3 && "Productos a comprar."}
               </SheetDescription>
             </div>
             <IconArrowsExchange className="absolute right-12 top-6 h-6 w-6 text-primary" />
           </div>
 
-          {/* Wizard header */}
           <div className="flex items-center justify-center mt-3 border-b pb-2">
             <div className="flex items-center gap-2 text-sm">
               <span className={step >= 1 ? "font-semibold text-primary" : ""}>
@@ -507,7 +541,7 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
               </span>
               <IconChevronRight className="h-4 w-4" />
               <span className={step >= 2 ? "font-semibold text-primary" : ""}>
-                2. Canje
+                2. Canje {receivedList.length > 0 && `(${receivedList.length})`}
               </span>
               <IconChevronRight className="h-4 w-4" />
               <span className={step >= 3 ? "font-semibold text-primary" : ""}>
@@ -657,10 +691,10 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
             </div>
           )}
 
-          {/* ========== PASO 2: PRODUCTO RECIBIDO ========== */}
+          {/* ========== PASO 2: PRODUCTOS RECIBIDOS ========== */}
           {step === 2 && (
             <div className="space-y-4">
-              <h3 className="font-medium">Producto recibido</h3>
+              <h3 className="font-medium">Productos recibidos en canje</h3>
 
               <div className="relative">
                 <Input
@@ -766,18 +800,7 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
                 </div>
               )}
 
-              <div className="rounded-lg border p-3 bg-muted/30">
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Valor en USD:</span>
-                  <span className="font-medium">{formatUSD(receivedUsd)}</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Valor en ARS:</span>
-                  <span className="font-medium">{formatARS(receivedArs)}</span>
-                </div>
-              </div>
-
-              {selectedReceivedVariant?.products?.inventory_tracking_mode === "serial" && (
+              {isSerialCurrent && (
                 <div className="space-y-2">
                   <h3 className="font-medium">IMEI / Código único</h3>
                   <Input
@@ -788,6 +811,63 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
                 </div>
               )}
 
+              <div className="rounded-lg border p-3 bg-muted/30">
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Valor en USD:</span>
+                  <span className="font-medium">{formatUSD(currentEntryArs / (effectiveRate || 1))}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Valor en ARS:</span>
+                  <span className="font-medium">{formatARS(currentEntryArs)}</span>
+                </div>
+              </div>
+
+              <Button
+                className="w-full"
+                variant="outline"
+                onClick={handleAddReceived}
+                disabled={!selectedReceivedVariant}
+              >
+                Agregar producto al canje
+              </Button>
+
+              {receivedList.length > 0 && (
+                <div className="space-y-3 border-t pt-3">
+                  <h4 className="text-sm font-semibold">Productos en canje ({receivedList.length})</h4>
+                  {receivedList.map((r) => (
+                    <div key={r.id} className="border rounded-lg p-3 bg-muted/20 flex justify-between items-start">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">
+                          {r.variant.products?.name || r.variant.variant_name}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {r.variant.variant_name} | {r.currency} {formatARS(r.amount)}
+                          {r.imei && ` | IMEI: ${r.imei}`}
+                        </p>
+                        <p className="text-xs text-green-600 font-medium">
+                          = {formatARS(r.amountArs)}
+                        </p>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-destructive shrink-0"
+                        onClick={() => removeFromReceivedList(r.id)}
+                      >
+                        <IconTrash className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  ))}
+
+                  <div className="rounded-lg border p-3 bg-muted/30">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">Total crédito canje:</span>
+                      <span className="font-semibold text-green-600">{formatARS(totalReceivedArs)}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div className="flex justify-end gap-2 mt-4">
                 <Button variant="outline" onClick={() => setStep(1)}>
                   <IconChevronLeft className="h-4 w-4" />
@@ -795,11 +875,7 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
                 </Button>
                 <Button
                   onClick={() => {
-                    if (!selectedReceivedVariant) return toast.error("Seleccioná el producto recibido");
-                    if (!receivedAmount || Number(receivedAmount) <= 0) return toast.error("Ingresá el monto cotizado");
-                    if (selectedReceivedVariant?.products?.inventory_tracking_mode === "serial" && (!receivedImei || !receivedImei.trim())) {
-                      return toast.error("El producto es serializado, ingresá el IMEI/SN");
-                    }
+                    if (receivedList.length === 0) return toast.error("Agregá al menos un producto recibido");
                     setStep(3);
                   }}
                 >
@@ -813,7 +889,6 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
           {/* ========== PASO 3: PRODUCTOS A COMPRAR ========== */}
           {step === 3 && (
             <div className="space-y-4">
-              {/* Búsqueda de producto */}
               <div className="relative">
                 <Input
                   placeholder="Buscar producto..."
@@ -858,7 +933,6 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
                 )}
               </div>
 
-              {/* Búsqueda de variante */}
               {selectedProduct && (
                 <div className="relative">
                   <Input
@@ -893,7 +967,6 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
                 </div>
               )}
 
-              {/* Carrito */}
               {cart.length > 0 && (
                 <div className="space-y-3 border-t pt-3">
                   <h4 className="text-sm font-semibold">Carrito de canje ({cart.length})</h4>
@@ -933,7 +1006,6 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
                           </div>
                         </div>
 
-                        {/* Unidades / cantidad */}
                         <div>
                           <label className="text-xs text-muted-foreground">
                             Cantidad ({quantity})
@@ -1008,7 +1080,6 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
                           </div>
                         </div>
 
-                        {/* Subtotal */}
                         <div className="flex justify-between pt-2 border-t text-xs text-muted-foreground">
                           <span>Subtotal ({quantity}u)</span>
                           {item.isFree ? (
@@ -1027,13 +1098,12 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
                 </div>
               )}
 
-              {/* Resumen + Notas + Botones al final */}
               {cart.length > 0 && (
                 <div className="space-y-3 border-t pt-3">
                   <div className="rounded-lg border p-3 bg-muted/30 space-y-1">
                     <div className="flex justify-between text-sm">
                       <span className="text-muted-foreground">Crédito canje:</span>
-                      <span className="font-medium text-green-600">{formatARS(receivedArs)}</span>
+                      <span className="font-medium text-green-600">{formatARS(totalReceivedArs)}</span>
                     </div>
                     <div className="flex justify-between text-sm">
                       <span className="text-muted-foreground">Total compra:</span>

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { getTotalReceivedArs } from "@/utils/tradeInHelpers";
 import {
   Table,
   TableBody,
@@ -67,10 +68,10 @@ export default function PendingSalesSection({ pendingSales, onCollect, loading, 
   const getTradeInCredit = (sale) => {
     if (!sale) return 0;
     if (sale.sale_type === "canje" && sale.trade_in_data) {
-      return Number(sale.trade_in_data.amount_ars || 0);
+      return getTotalReceivedArs(sale.trade_in_data);
     }
     if (sale.sale_type === "warranty" && sale.trade_in_data) {
-      return Number(sale.trade_in_data.amount_ars || 0);
+      return getTotalReceivedArs(sale.trade_in_data);
     }
     return 0;
   };
