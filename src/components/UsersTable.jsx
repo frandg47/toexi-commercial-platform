@@ -382,7 +382,7 @@ const UsersTable = ({ refreshToken = 0 }) => {
             <IconRefresh
               className={refreshing ? "h-4 w-4 animate-spin" : "h-4 w-4"}
             />
-            Refrescar
+            Actualizar
           </Button>
 
         </div>

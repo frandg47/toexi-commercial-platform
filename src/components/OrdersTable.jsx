@@ -531,7 +531,7 @@ const OrdersTable = () => {
               >
                 {/* md–xl: ícono + texto */}
                 <IconRefresh className={refreshing && "h-4 w-4 animate-spin"} />
-                <span>Refrescar</span>
+                <span>Actualizar</span>
               </Button>
             </div>
           </div>

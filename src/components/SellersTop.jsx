@@ -649,7 +649,7 @@ export default function SellersTop({ viewRole, currentUserRole }) {
       ) : null}
 
       <Dialog open={salesDialogOpen} onOpenChange={setSalesDialogOpen}>
-        <DialogContent className="min-w-6xl max-h-[85svh] overflow-y-auto rounded-2xl p-4 sm:p-6">
+        <DialogContent className="!w-[90vw] !max-w-[90vw] flex max-h-[85vh] flex-col p-4 sm:p-6">
           <DialogHeader>
             <DialogTitle>{salesDialogTitle}</DialogTitle>
           </DialogHeader>

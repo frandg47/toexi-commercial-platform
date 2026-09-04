@@ -1006,7 +1006,7 @@ const SellersTable = ({ refreshToken = 0 }) => {
             </AlertDialog>
 
             <Dialog open={salesDialogOpen} onOpenChange={setSalesDialogOpen}>
-                <DialogContent className="w-[90vw] sm:max-w-3xl max-h-[85svh] overflow-y-auto">
+                <DialogContent className="!w-[90vw] !max-w-[90vw] flex max-h-[85vh] flex-col p-4 sm:p-6">
                     <DialogHeader>
                         <DialogTitle>{salesDialogTitle}</DialogTitle>
                     </DialogHeader>

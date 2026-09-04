@@ -22,7 +22,7 @@ const ProvidersConfig = () => {
           onAdd={
             <Button onClick={() => setDialogOpen(true)}>
               <IconPlus className="h-4 w-4" />
-              Nuevo proveedor
+              Agregar
             </Button>
           }
         />

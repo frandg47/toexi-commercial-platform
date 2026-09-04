@@ -243,7 +243,7 @@ const CustomersTable = ({ refreshToken = 0, isSellerView }) => {
             <IconRefresh
               className={refreshing ? "h-4 w-4 animate-spin" : "h-4 w-4"}
             />
-            Refrescar
+            Actualizar
           </Button>
 
           <Button onClick={() => setDialogOpen(true)}>

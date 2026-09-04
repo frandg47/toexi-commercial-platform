@@ -93,7 +93,6 @@ const isMovementPendingAccreditation = (movement) =>
   movement?.available_on &&
   movement.available_on > todayDateKey();
 
-
 export default function FinancePage() {
   const { role } = useAuth();
   const isOwner = role?.toLowerCase() === "owner";
@@ -137,7 +136,9 @@ export default function FinancePage() {
       while (true) {
         const { data, error } = await supabase
           .from("account_movements")
-          .select("account_id, type, amount, currency, accreditation_status, available_on, related_table, related_id")
+          .select(
+            "account_id, type, amount, currency, accreditation_status, available_on, related_table, related_id",
+          )
           .range(from, from + pageSize - 1);
         if (error) throw error;
         if (!data?.length) break;
@@ -157,13 +158,13 @@ export default function FinancePage() {
       { data: salesChannelsData, error: salesChannelsError },
       { data: salesYearsData, error: salesYearsError },
     ] = await Promise.all([
-        supabase
-          .from("accounts")
-          .select(
+      supabase
+        .from("accounts")
+        .select(
           "id, name, currency, initial_balance, active, include_in_balance, is_reference_capital, is_efectivo, is_caja_virtual",
         )
-          .eq("active", true)
-          .order("name", { ascending: true }),
+        .eq("active", true)
+        .order("name", { ascending: true }),
       supabase
         .from("fx_rates")
         .select("rate")
@@ -273,19 +274,40 @@ export default function FinancePage() {
         .filter(Boolean);
       const [salePayments, deposits] = await Promise.all([
         salePaymentIds.length
-          ? supabase.from("sale_payments").select("id, payment_methods(name)").in("id", salePaymentIds)
+          ? supabase
+              .from("sale_payments")
+              .select("id, payment_methods(name)")
+              .in("id", salePaymentIds)
           : Promise.resolve({ data: [] }),
         depositIds.length
-          ? supabase.from("order_deposits").select("id, payment_methods(name)").in("id", depositIds)
+          ? supabase
+              .from("order_deposits")
+              .select("id, payment_methods(name)")
+              .in("id", depositIds)
           : Promise.resolve({ data: [] }),
       ]);
       const paymentNames = new Map();
-      (salePayments.data || []).forEach((payment) => paymentNames.set(`sale_payments:${payment.id}`, payment.payment_methods?.name || ""));
-      (deposits.data || []).forEach((deposit) => paymentNames.set(`order_deposits:${deposit.id}`, deposit.payment_methods?.name || ""));
-      setBalanceMovementsAll(movements.map((movement) => ({
-        ...movement,
-        payment_method_name: paymentNames.get(`${movement.related_table}:${movement.related_id}`) || "",
-      })));
+      (salePayments.data || []).forEach((payment) =>
+        paymentNames.set(
+          `sale_payments:${payment.id}`,
+          payment.payment_methods?.name || "",
+        ),
+      );
+      (deposits.data || []).forEach((deposit) =>
+        paymentNames.set(
+          `order_deposits:${deposit.id}`,
+          deposit.payment_methods?.name || "",
+        ),
+      );
+      setBalanceMovementsAll(
+        movements.map((movement) => ({
+          ...movement,
+          payment_method_name:
+            paymentNames.get(
+              `${movement.related_table}:${movement.related_id}`,
+            ) || "",
+        })),
+      );
     }
 
     if (salesChannelsError) {
@@ -431,7 +453,8 @@ export default function FinancePage() {
           if (m.currency === "USD") {
             amountUsd = amount;
           } else if (m.currency === "USDT") {
-            if (usdtRate && saleRate) amountUsd = (amount * usdtRate) / saleRate;
+            if (usdtRate && saleRate)
+              amountUsd = (amount * usdtRate) / saleRate;
             else amountUsd = amount;
           } else if (m.currency === "ARS") {
             if (saleRate) amountUsd = amount / saleRate;
@@ -465,14 +488,18 @@ export default function FinancePage() {
         };
       }
 
-      const tradeInUsd = sale.sale_type === "canje" && sale.trade_in_data
-        ? getTotalReceivedUsd(sale.trade_in_data) : 0;
-      const baseIncome = saleAccreditedIncome[sale.id] != null
-        ? Number(saleAccreditedIncome[sale.id])
-        : Number(sale.total_usd || 0);
-      const income = saleAccreditedIncome[sale.id] != null
-        ? baseIncome + tradeInUsd
-        : baseIncome;
+      const tradeInUsd =
+        sale.sale_type === "canje" && sale.trade_in_data
+          ? getTotalReceivedUsd(sale.trade_in_data)
+          : 0;
+      const baseIncome =
+        saleAccreditedIncome[sale.id] != null
+          ? Number(saleAccreditedIncome[sale.id])
+          : Number(sale.total_usd || 0);
+      const income =
+        saleAccreditedIncome[sale.id] != null
+          ? baseIncome + tradeInUsd
+          : baseIncome;
       monthlyData[monthKey].totalSales += income;
 
       sale.sale_items?.forEach((item) => {
@@ -497,189 +524,17 @@ export default function FinancePage() {
     setMonthlyNetIncomeLoading(false);
   }, [selectedSalesChannels, selectedYear, fxRate, usdtRate]);
 
-  const loadMonthDetail = useCallback(async (monthKey) => {
-    setDetailLoading(true);
-    setDetailMonth(monthKey);
-    const [month, year] = monthKey.split("/");
-    const paddedMonth = month.padStart(2, "0");
-    const monthStart = `${year}-${paddedMonth}-01`;
-    const nextMonth = Number(month) + 1;
-    const nextMonthYear = nextMonth > 12 ? Number(year) + 1 : Number(year);
-    const nextMonthPadded = nextMonth > 12 ? "01" : String(nextMonth).padStart(2, "0");
-    const nextMonthStart = `${nextMonthYear}-${nextMonthPadded}-01`;
-
-    let salesQuery = supabase
-      .from("sales")
-      .select(`id,sale_date,total_usd,fx_rate_used,seller_id,sale_type,trade_in_data,sales_channels(name),sale_items(product_name,variant_name,quantity,usd_price,cost_price_usd,subtotal_usd,commission_pct,commission_fixed)`)
-      .eq("status", "vendido")
-      .is("voided_at", null)
-      .gte("sale_date", monthStart)
-      .lt("sale_date", nextMonthStart);
-
-    if (
-      selectedSalesChannels.length === 1 &&
-      selectedSalesChannels[0] === "none"
-    ) {
-      salesQuery = salesQuery.is("sales_channel_id", null);
-    } else if (selectedSalesChannels.length > 0) {
-      const channelIds = selectedSalesChannels
-        .filter((channelId) => channelId !== "none")
-        .map(Number);
-
-      if (channelIds.length > 0 && selectedSalesChannels.includes("none")) {
-        salesQuery = salesQuery.or(
-          `sales_channel_id.in.(${channelIds.join(",")}),sales_channel_id.is.null`,
-        );
-      } else if (channelIds.length > 0) {
-        salesQuery = salesQuery.in("sales_channel_id", channelIds);
-      }
-    }
-
-    salesQuery = salesQuery.order("sale_date", { ascending: false });
-
-    const { data: salesData, error } = await salesQuery;
-
-    if (error) {
-      console.error("Error loading month detail:", error);
-      toast.error("No se pudieron cargar las ventas del mes", {
-        description: error.message,
-      });
-      setDetailLoading(false);
-      return;
-    }
-
-    const saleIds = (salesData || []).map((s) => s.id);
-    const uniqueSellerIds = [...new Set((salesData || []).map((s) => s.seller_id).filter(Boolean))];
-    const saleAccreditedIncome = {};
-    const saleHasPendingMovements = {};
-    const sellerRoleMap = {};
-    const saleFxRateMap = new Map(
-      (salesData || []).map((s) => [s.id, Number(s.fx_rate_used || 0)]),
-    );
-
-    if (uniqueSellerIds.length > 0) {
-      const { data: sellerUsers } = await supabase
-        .from("users")
-        .select("id_auth, role")
-        .in("id_auth", uniqueSellerIds);
-
-      (sellerUsers || []).forEach((u) => {
-        sellerRoleMap[u.id_auth] = u.role;
-      });
-    }
-
-    if (saleIds.length > 0) {
-      const { data: paymentsData } = await supabase
-        .from("sale_payments")
-        .select("id, sale_id")
-        .in("sale_id", saleIds);
-
-      const paymentIds = (paymentsData || []).map((p) => p.id);
-
-      if (paymentIds.length > 0) {
-        const { data: incomeMovements } = await supabase
-          .from("account_movements")
-          .select(
-            "amount, currency, related_id, accreditation_status, available_on",
-          )
-          .eq("type", "income")
-          .in("related_table", ["sale_payments", "sale_payment_history"])
-          .in("related_id", paymentIds);
-
-        const paymentToSale = new Map(
-          (paymentsData || []).map((p) => [p.id, p.sale_id]),
-        );
-        const today = todayDateKey();
-
-        for (const m of incomeMovements || []) {
-          const saleId = paymentToSale.get(m.related_id);
-          if (!saleId) continue;
-
-          if (
-            m.accreditation_status === "pending" &&
-            m.available_on &&
-            m.available_on > today
-          ) {
-            saleHasPendingMovements[saleId] = true;
-            continue;
-          }
-
-          const amount = Number(m.amount || 0);
-          if (!amount) continue;
-
-          const saleRate = saleFxRateMap.get(saleId) || fxRate;
-
-          let amountUsd = null;
-          if (m.currency === "USD") {
-            amountUsd = amount;
-          } else if (m.currency === "USDT") {
-            if (usdtRate && saleRate) amountUsd = (amount * usdtRate) / saleRate;
-            else amountUsd = amount;
-          } else if (m.currency === "ARS") {
-            if (saleRate) amountUsd = amount / saleRate;
-          }
-
-          if (amountUsd === null) continue;
-
-          saleAccreditedIncome[saleId] =
-            (saleAccreditedIncome[saleId] || 0) + amountUsd;
-        }
-      }
-    }
-
-    const enrichedSales = (salesData || []).map((sale) => {
-      const sellerRole = sellerRoleMap[sale.seller_id];
-      let commissionUsd = null;
-      if (sellerRole === "seller") {
-        commissionUsd = (sale.sale_items || []).reduce((sum, it) => {
-          const qty = Number(it.quantity || 0);
-          const price = Number(it.usd_price || 0);
-          const pct = it.commission_pct;
-          const fixed = it.commission_fixed;
-          if (pct != null) return sum + price * qty * (Number(pct) / 100);
-          if (fixed != null) return sum + Number(fixed) * qty;
-          return sum;
-        }, 0);
-      }
-      const tradeInUsd = sale.sale_type === "canje" && sale.trade_in_data
-        ? getTotalReceivedUsd(sale.trade_in_data) : 0;
-      const baseAccredited = saleAccreditedIncome[sale.id] != null
-        ? Number(saleAccreditedIncome[sale.id])
-        : Number(sale.total_usd || 0);
-      return {
-        ...sale,
-        accredited_total_usd: saleAccreditedIncome[sale.id] != null
-          ? baseAccredited + tradeInUsd
-          : baseAccredited,
-        trade_in_usd: tradeInUsd,
-        income_pending: !saleAccreditedIncome[sale.id] && Boolean(saleHasPendingMovements[sale.id]),
-        commission_usd: commissionUsd,
-      };
-    });
-
-    setDetailSales(enrichedSales);
-    setDetailLoading(false);
-    setDetailDialogOpen(true);
-  }, [selectedSalesChannels, fxRate, usdtRate]);
-
-  const availableExportMonths = useMemo(() => {
-    return monthlyNetIncome.map((m) => m.month);
-  }, [monthlyNetIncome]);
-
-  const openExportDialog = useCallback((format) => {
-    setExportFormat(format);
-    setExportTargetMonth("");
-    setExportDialogOpen(true);
-  }, []);
-
-  const loadDetailAndExport = useCallback(
-    async (monthKey, format) => {
+  const loadMonthDetail = useCallback(
+    async (monthKey) => {
+      setDetailLoading(true);
+      setDetailMonth(monthKey);
       const [month, year] = monthKey.split("/");
       const paddedMonth = month.padStart(2, "0");
       const monthStart = `${year}-${paddedMonth}-01`;
       const nextMonth = Number(month) + 1;
       const nextMonthYear = nextMonth > 12 ? Number(year) + 1 : Number(year);
-      const nextMonthPadded = nextMonth > 12 ? "01" : String(nextMonth).padStart(2, "0");
+      const nextMonthPadded =
+        nextMonth > 12 ? "01" : String(nextMonth).padStart(2, "0");
       const nextMonthStart = `${nextMonthYear}-${nextMonthPadded}-01`;
 
       let salesQuery = supabase
@@ -716,14 +571,18 @@ export default function FinancePage() {
       const { data: salesData, error } = await salesQuery;
 
       if (error) {
-        toast.error("No se pudieron cargar las ventas", {
+        console.error("Error loading month detail:", error);
+        toast.error("No se pudieron cargar las ventas del mes", {
           description: error.message,
         });
+        setDetailLoading(false);
         return;
       }
 
       const saleIds = (salesData || []).map((s) => s.id);
-      const uniqueSellerIds = [...new Set((salesData || []).map((s) => s.seller_id).filter(Boolean))];
+      const uniqueSellerIds = [
+        ...new Set((salesData || []).map((s) => s.seller_id).filter(Boolean)),
+      ];
       const saleAccreditedIncome = {};
       const saleHasPendingMovements = {};
       const sellerRoleMap = {};
@@ -778,20 +637,21 @@ export default function FinancePage() {
               continue;
             }
 
-          const amount = Number(m.amount || 0);
-          if (!amount) continue;
+            const amount = Number(m.amount || 0);
+            if (!amount) continue;
 
-          const saleRate = saleFxRateMap.get(saleId) || fxRate;
+            const saleRate = saleFxRateMap.get(saleId) || fxRate;
 
-          let amountUsd = null;
-          if (m.currency === "USD") {
-            amountUsd = amount;
-          } else if (m.currency === "USDT") {
-            if (usdtRate && saleRate) amountUsd = (amount * usdtRate) / saleRate;
-            else amountUsd = amount;
-          } else if (m.currency === "ARS") {
-            if (saleRate) amountUsd = amount / saleRate;
-          }
+            let amountUsd = null;
+            if (m.currency === "USD") {
+              amountUsd = amount;
+            } else if (m.currency === "USDT") {
+              if (usdtRate && saleRate)
+                amountUsd = (amount * usdtRate) / saleRate;
+              else amountUsd = amount;
+            } else if (m.currency === "ARS") {
+              if (saleRate) amountUsd = amount / saleRate;
+            }
 
             if (amountUsd === null) continue;
 
@@ -815,18 +675,210 @@ export default function FinancePage() {
             return sum;
           }, 0);
         }
-        const tradeInUsd = sale.sale_type === "canje" && sale.trade_in_data
-          ? getTotalReceivedUsd(sale.trade_in_data) : 0;
-        const baseAccredited = saleAccreditedIncome[sale.id] != null
-          ? Number(saleAccreditedIncome[sale.id])
-          : Number(sale.total_usd || 0);
+        const tradeInUsd =
+          sale.sale_type === "canje" && sale.trade_in_data
+            ? getTotalReceivedUsd(sale.trade_in_data)
+            : 0;
+        const baseAccredited =
+          saleAccreditedIncome[sale.id] != null
+            ? Number(saleAccreditedIncome[sale.id])
+            : Number(sale.total_usd || 0);
         return {
           ...sale,
-          accredited_total_usd: saleAccreditedIncome[sale.id] != null
-            ? baseAccredited + tradeInUsd
-            : baseAccredited,
+          accredited_total_usd:
+            saleAccreditedIncome[sale.id] != null
+              ? baseAccredited + tradeInUsd
+              : baseAccredited,
           trade_in_usd: tradeInUsd,
-          income_pending: !saleAccreditedIncome[sale.id] && Boolean(saleHasPendingMovements[sale.id]),
+          income_pending:
+            !saleAccreditedIncome[sale.id] &&
+            Boolean(saleHasPendingMovements[sale.id]),
+          commission_usd: commissionUsd,
+        };
+      });
+
+      setDetailSales(enrichedSales);
+      setDetailLoading(false);
+      setDetailDialogOpen(true);
+    },
+    [selectedSalesChannels, fxRate, usdtRate],
+  );
+
+  const availableExportMonths = useMemo(() => {
+    return monthlyNetIncome.map((m) => m.month);
+  }, [monthlyNetIncome]);
+
+  const openExportDialog = useCallback((format) => {
+    setExportFormat(format);
+    setExportTargetMonth("");
+    setExportDialogOpen(true);
+  }, []);
+
+  const loadDetailAndExport = useCallback(
+    async (monthKey, format) => {
+      const [month, year] = monthKey.split("/");
+      const paddedMonth = month.padStart(2, "0");
+      const monthStart = `${year}-${paddedMonth}-01`;
+      const nextMonth = Number(month) + 1;
+      const nextMonthYear = nextMonth > 12 ? Number(year) + 1 : Number(year);
+      const nextMonthPadded =
+        nextMonth > 12 ? "01" : String(nextMonth).padStart(2, "0");
+      const nextMonthStart = `${nextMonthYear}-${nextMonthPadded}-01`;
+
+      let salesQuery = supabase
+        .from("sales")
+        .select(
+          `id,sale_date,total_usd,fx_rate_used,seller_id,sale_type,trade_in_data,sales_channels(name),sale_items(product_name,variant_name,quantity,usd_price,cost_price_usd,subtotal_usd,commission_pct,commission_fixed)`,
+        )
+        .eq("status", "vendido")
+        .is("voided_at", null)
+        .gte("sale_date", monthStart)
+        .lt("sale_date", nextMonthStart);
+
+      if (
+        selectedSalesChannels.length === 1 &&
+        selectedSalesChannels[0] === "none"
+      ) {
+        salesQuery = salesQuery.is("sales_channel_id", null);
+      } else if (selectedSalesChannels.length > 0) {
+        const channelIds = selectedSalesChannels
+          .filter((channelId) => channelId !== "none")
+          .map(Number);
+
+        if (channelIds.length > 0 && selectedSalesChannels.includes("none")) {
+          salesQuery = salesQuery.or(
+            `sales_channel_id.in.(${channelIds.join(",")}),sales_channel_id.is.null`,
+          );
+        } else if (channelIds.length > 0) {
+          salesQuery = salesQuery.in("sales_channel_id", channelIds);
+        }
+      }
+
+      salesQuery = salesQuery.order("sale_date", { ascending: false });
+
+      const { data: salesData, error } = await salesQuery;
+
+      if (error) {
+        toast.error("No se pudieron cargar las ventas", {
+          description: error.message,
+        });
+        return;
+      }
+
+      const saleIds = (salesData || []).map((s) => s.id);
+      const uniqueSellerIds = [
+        ...new Set((salesData || []).map((s) => s.seller_id).filter(Boolean)),
+      ];
+      const saleAccreditedIncome = {};
+      const saleHasPendingMovements = {};
+      const sellerRoleMap = {};
+      const saleFxRateMap = new Map(
+        (salesData || []).map((s) => [s.id, Number(s.fx_rate_used || 0)]),
+      );
+
+      if (uniqueSellerIds.length > 0) {
+        const { data: sellerUsers } = await supabase
+          .from("users")
+          .select("id_auth, role")
+          .in("id_auth", uniqueSellerIds);
+
+        (sellerUsers || []).forEach((u) => {
+          sellerRoleMap[u.id_auth] = u.role;
+        });
+      }
+
+      if (saleIds.length > 0) {
+        const { data: paymentsData } = await supabase
+          .from("sale_payments")
+          .select("id, sale_id")
+          .in("sale_id", saleIds);
+
+        const paymentIds = (paymentsData || []).map((p) => p.id);
+
+        if (paymentIds.length > 0) {
+          const { data: incomeMovements } = await supabase
+            .from("account_movements")
+            .select(
+              "amount, currency, related_id, accreditation_status, available_on",
+            )
+            .eq("type", "income")
+            .in("related_table", ["sale_payments", "sale_payment_history"])
+            .in("related_id", paymentIds);
+
+          const paymentToSale = new Map(
+            (paymentsData || []).map((p) => [p.id, p.sale_id]),
+          );
+          const today = todayDateKey();
+
+          for (const m of incomeMovements || []) {
+            const saleId = paymentToSale.get(m.related_id);
+            if (!saleId) continue;
+
+            if (
+              m.accreditation_status === "pending" &&
+              m.available_on &&
+              m.available_on > today
+            ) {
+              saleHasPendingMovements[saleId] = true;
+              continue;
+            }
+
+            const amount = Number(m.amount || 0);
+            if (!amount) continue;
+
+            const saleRate = saleFxRateMap.get(saleId) || fxRate;
+
+            let amountUsd = null;
+            if (m.currency === "USD") {
+              amountUsd = amount;
+            } else if (m.currency === "USDT") {
+              if (usdtRate && saleRate)
+                amountUsd = (amount * usdtRate) / saleRate;
+              else amountUsd = amount;
+            } else if (m.currency === "ARS") {
+              if (saleRate) amountUsd = amount / saleRate;
+            }
+
+            if (amountUsd === null) continue;
+
+            saleAccreditedIncome[saleId] =
+              (saleAccreditedIncome[saleId] || 0) + amountUsd;
+          }
+        }
+      }
+
+      const enrichedSales = (salesData || []).map((sale) => {
+        const sellerRole = sellerRoleMap[sale.seller_id];
+        let commissionUsd = null;
+        if (sellerRole === "seller") {
+          commissionUsd = (sale.sale_items || []).reduce((sum, it) => {
+            const qty = Number(it.quantity || 0);
+            const price = Number(it.usd_price || 0);
+            const pct = it.commission_pct;
+            const fixed = it.commission_fixed;
+            if (pct != null) return sum + price * qty * (Number(pct) / 100);
+            if (fixed != null) return sum + Number(fixed) * qty;
+            return sum;
+          }, 0);
+        }
+        const tradeInUsd =
+          sale.sale_type === "canje" && sale.trade_in_data
+            ? getTotalReceivedUsd(sale.trade_in_data)
+            : 0;
+        const baseAccredited =
+          saleAccreditedIncome[sale.id] != null
+            ? Number(saleAccreditedIncome[sale.id])
+            : Number(sale.total_usd || 0);
+        return {
+          ...sale,
+          accredited_total_usd:
+            saleAccreditedIncome[sale.id] != null
+              ? baseAccredited + tradeInUsd
+              : baseAccredited,
+          trade_in_usd: tradeInUsd,
+          income_pending:
+            !saleAccreditedIncome[sale.id] &&
+            Boolean(saleHasPendingMovements[sale.id]),
           commission_usd: commissionUsd,
         };
       });
@@ -851,7 +903,10 @@ export default function FinancePage() {
             sum + Number(it.quantity || 0) * Number(it.cost_price_usd ?? 0),
           0,
         );
-        const commission = sale.commission_usd != null ? Number(sale.commission_usd.toFixed(2)) : 0;
+        const commission =
+          sale.commission_usd != null
+            ? Number(sale.commission_usd.toFixed(2))
+            : 0;
         const net = totalSale - totalCost - commission;
 
         return {
@@ -863,18 +918,21 @@ export default function FinancePage() {
           Cotización: Number(sale.fx_rate_used ?? 0),
           "Total Vta (USD)": totalSale,
           "Costo Total (USD)": totalCost,
-          "Comisión (USD)": sale.commission_usd != null
-            ? commission
-            : "No aplica",
+          "Comisión (USD)":
+            sale.commission_usd != null ? commission : "No aplica",
           "Ganancia Neta (USD)": net,
-          "Acreditación": sale.income_pending ? "Pendiente" : "Acreditado",
+          Acreditación: sale.income_pending ? "Pendiente" : "Acreditado",
         };
       });
 
       if (format === "excel") {
         const ws = XLSX.utils.json_to_sheet(rows);
         const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, `Ventas ${monthKey.replace(/\//g, "-")}`);
+        XLSX.utils.book_append_sheet(
+          wb,
+          ws,
+          `Ventas ${monthKey.replace(/\//g, "-")}`,
+        );
 
         ws["!cols"] = [
           { wch: 12 },
@@ -918,7 +976,10 @@ export default function FinancePage() {
               sum + Number(it.quantity || 0) * Number(it.cost_price_usd ?? 0),
             0,
           );
-          const commission = sale.commission_usd != null ? Number(sale.commission_usd.toFixed(2)) : 0;
+          const commission =
+            sale.commission_usd != null
+              ? Number(sale.commission_usd.toFixed(2))
+              : 0;
           const net = totalSale - totalCost - commission;
 
           return [
@@ -1132,10 +1193,12 @@ export default function FinancePage() {
       if (
         movement.type !== "income" ||
         !isMovementPendingAccreditation(movement)
-      ) return;
+      )
+        return;
       const currency = movement.currency || "ARS";
       const amount = Number(movement.amount || 0);
-      if (result.cards.pending[currency] !== undefined) result.cards.pending[currency] += amount;
+      if (result.cards.pending[currency] !== undefined)
+        result.cards.pending[currency] += amount;
     });
 
     return result;
@@ -1219,21 +1282,32 @@ export default function FinancePage() {
             <CardTitle className="text-white">Transferencias</CardTitle>
           </CardHeader>
           <CardContent className="space-y-1 text-white">
-            <div className="text-2xl font-semibold">{formatCurrency(operationalBalances.transfers.ARS, "ARS")}</div>
+            <div className="text-2xl font-semibold">
+              {formatCurrency(operationalBalances.transfers.ARS, "ARS")}
+            </div>
             <div className="text-xs opacity-90">
-              {formatCurrency(operationalBalances.transfers.USD, "USD")} · {formatCurrency(operationalBalances.transfers.USDT, "USDT")}
+              {formatCurrency(operationalBalances.transfers.USD, "USD")} ·{" "}
+              {formatCurrency(operationalBalances.transfers.USDT, "USDT")}
             </div>
           </CardContent>
         </Card>
         <Card className="bg-amber-500">
           <CardHeader>
-            <CardTitle className="text-white">Pendientes de acreditación</CardTitle>
+            <CardTitle className="text-white">
+              Pendientes de acreditación
+            </CardTitle>
           </CardHeader>
           <CardContent className="space-y-1 text-white">
-            <div className="text-2xl font-semibold">{formatCurrency(operationalBalances.cards.pending.ARS, "ARS")}</div>
-            {(operationalBalances.cards.pending.USD || operationalBalances.cards.pending.USDT) ? (
+            <div className="text-2xl font-semibold">
+              {formatCurrency(operationalBalances.cards.pending.ARS, "ARS")}
+            </div>
+            {operationalBalances.cards.pending.USD ||
+            operationalBalances.cards.pending.USDT ? (
               <div className="text-xs opacity-90">
-                USD: {formatCurrency(operationalBalances.cards.pending.USD, "USD")} · USDT: {formatCurrency(operationalBalances.cards.pending.USDT, "USDT")}
+                USD:{" "}
+                {formatCurrency(operationalBalances.cards.pending.USD, "USD")} ·
+                USDT:{" "}
+                {formatCurrency(operationalBalances.cards.pending.USDT, "USDT")}
               </div>
             ) : null}
           </CardContent>
@@ -1354,6 +1428,7 @@ export default function FinancePage() {
               </div>
             </div>
             <Button
+              variant="outline"
               onClick={loadMonthlyNetIncome}
               disabled={monthlyNetIncomeLoading}
             >
@@ -1462,7 +1537,7 @@ export default function FinancePage() {
       <Card>
         <CardHeader className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <CardTitle>Balance por cuenta</CardTitle>
-          <Button onClick={loadStaticData} disabled={loading}>
+          <Button onClick={loadStaticData} disabled={loading} variant={"outline"}>
             <IconRefresh className="h-4 w-4" />
             {loading ? "Actualizando..." : "Actualizar"}
           </Button>
@@ -1614,130 +1689,149 @@ export default function FinancePage() {
       </Card>
 
       <Dialog open={detailDialogOpen} onOpenChange={setDetailDialogOpen}>
-        <DialogContent className="min-w-6xl max-h-[85svh] overflow-y-auto rounded-2xl p-4 sm:p-6">
+        {/* Modificado: Se remueve la restricción estricta de h y vh para dar flex completo */}
+        <DialogContent className="!w-[90vw] !max-w-[90vw] flex max-h-[85vh] flex-col p-4 sm:p-6">
           <DialogHeader>
             <DialogTitle>Ventas del período {detailMonth}</DialogTitle>
           </DialogHeader>
-          <ScrollArea className="h-full max-h-[65vh]">
-            {detailLoading ? (
-              <div className="flex items-center justify-center py-8 text-muted-foreground">
-                Cargando...
-              </div>
-            ) : detailSales.length === 0 ? (
-              <div className="flex items-center justify-center py-8 text-muted-foreground">
-                No hay ventas en este mes.
-              </div>
-            ) : (
-              <div className="rounded-md border overflow-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Fecha</TableHead>
-                      <TableHead className="text-right">Venta ID</TableHead>
-                      <TableHead>Producto</TableHead>
-                      <TableHead>Canal</TableHead>
-                      <TableHead className="text-right">Items</TableHead>
-                      <TableHead className="text-right">Cotización</TableHead>
-                      <TableHead className="text-right">Total Vta</TableHead>
-                      <TableHead className="text-right">Costo Total</TableHead>
-                      <TableHead className="text-right">Comisión</TableHead>
-                      <TableHead className="text-right bg-emerald-50/70 text-emerald-800">
-                        Ganancia Neta
-                      </TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {detailSales.map((sale) => {
-                      const items = sale.sale_items || [];
-                      const labels = items
-                        .map(
-                          (it) =>
-                            `${it.product_name}${it.variant_name ? ` - ${it.variant_name}` : ""} (x${it.quantity})`,
-                        )
-                        .join("\n");
-                      const totalQty = items.reduce(
-                        (sum, it) => sum + Number(it.quantity || 0),
-                        0,
-                      );
-                      const totalSale = Number(
-                        sale.accredited_total_usd ?? sale.total_usd ?? 0,
-                      );
-                      const totalCost = items.reduce(
-                        (sum, it) =>
-                          sum +
-                          Number(it.quantity || 0) *
-                            Number(it.cost_price_usd ?? 0),
-                        0,
-                      );
-                      const commission = sale.commission_usd != null ? Number(sale.commission_usd.toFixed(2)) : 0;
-                      const net = totalSale - totalCost - commission;
 
-                      return (
-                        <TableRow key={sale.id}>
-                          <TableCell className="whitespace-nowrap">
-                            {new Date(sale.sale_date).toLocaleDateString(
-                              "es-AR",
-                            )}
-                          </TableCell>
-                          <TableCell className="text-right font-mono text-xs">
-                            #{sale.id}
-                          </TableCell>
-                          <TableCell
-                            className="max-w-[240px] whitespace-pre-line"
-                            title={labels}
-                          >
-                            {labels || "-"}
-                            {sale.sale_type === "canje" && (
-                              <Badge variant="outline" className="ml-1 text-[10px] border-amber-300 bg-amber-50 text-amber-700">
-                                Canje
+          {detailLoading ? (
+            <div className="flex items-center justify-center py-8 text-muted-foreground">
+              Cargando...
+            </div>
+          ) : detailSales.length === 0 ? (
+            <div className="flex items-center justify-center py-8 text-muted-foreground">
+              No hay ventas en este mes.
+            </div>
+          ) : (
+            /* Modificado: Contenedor principal con overflow-auto para controlar el scroll horizontal y vertical de la tabla */
+            <div className="relative w-full flex-1 overflow-auto rounded-md border">
+              <Table className="w-full">
+                {/* Modificado: sticky top-0 para fijar el encabezado al hacer scroll vertical */}
+                <TableHeader className="sticky top-0 z-10 bg-background shadow-sm">
+                  <TableRow>
+                    <TableHead>Fecha</TableHead>
+                    <TableHead className="hidden text-right lg:table-cell">
+                      Venta ID
+                    </TableHead>
+                    <TableHead>Producto</TableHead>
+                    <TableHead className="hidden md:table-cell">
+                      Canal
+                    </TableHead>
+                    <TableHead className="hidden text-right lg:table-cell">
+                      Items
+                    </TableHead>
+                    <TableHead className="hidden text-right lg:table-cell">
+                      Cotización
+                    </TableHead>
+                    <TableHead className="text-right">Total Vta</TableHead>
+                    <TableHead className="text-right">Costo Total</TableHead>
+                    <TableHead className="hidden text-right sm:table-cell">
+                      Comisión
+                    </TableHead>
+                    <TableHead className="bg-emerald-50/70 text-right text-emerald-800">
+                      Ganancia Neta
+                    </TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {detailSales.map((sale) => {
+                    const items = sale.sale_items || [];
+                    const labels = items
+                      .map(
+                        (it) =>
+                          `${it.product_name}${it.variant_name ? ` - ${it.variant_name}` : ""} (x${it.quantity})`,
+                      )
+                      .join("\n");
+                    const totalQty = items.reduce(
+                      (sum, it) => sum + Number(it.quantity || 0),
+                      0,
+                    );
+                    const totalSale = Number(
+                      sale.accredited_total_usd ?? sale.total_usd ?? 0,
+                    );
+                    const totalCost = items.reduce(
+                      (sum, it) =>
+                        sum +
+                        Number(it.quantity || 0) *
+                          Number(it.cost_price_usd ?? 0),
+                      0,
+                    );
+                    const commission =
+                      sale.commission_usd != null
+                        ? Number(sale.commission_usd.toFixed(2))
+                        : 0;
+                    const net = totalSale - totalCost - commission;
+
+                    return (
+                      <TableRow key={sale.id}>
+                        <TableCell className="whitespace-nowrap">
+                          {new Date(sale.sale_date).toLocaleDateString("es-AR")}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-xs hidden lg:table-cell">
+                          #{sale.id}
+                        </TableCell>
+                        <TableCell
+                          className="max-w-[240px] whitespace-pre-line"
+                          title={labels}
+                        >
+                          {labels || "-"}
+                          {sale.sale_type === "canje" && (
+                            <Badge
+                              variant="outline"
+                              className="ml-1 text-[10px] border-amber-300 bg-amber-50 text-amber-700"
+                            >
+                              Canje
+                            </Badge>
+                          )}
+                        </TableCell>
+                        <TableCell className="hidden md:table-cell">
+                          {sale.sales_channels?.name || "-"}
+                        </TableCell>
+                        <TableCell className="text-right hidden lg:table-cell">
+                          {totalQty}
+                        </TableCell>
+                        <TableCell className="text-right hidden lg:table-cell">
+                          {formatCurrency(
+                            Number(sale.fx_rate_used ?? 0),
+                            "ARS",
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            {formatCurrency(totalSale, "USD")}
+                            {sale.income_pending && (
+                              <Badge
+                                variant="outline"
+                                className="border-amber-200 bg-amber-50 text-[10px] text-amber-700"
+                              >
+                                Pendiente
                               </Badge>
                             )}
-                          </TableCell>
-                          <TableCell>
-                            {sale.sales_channels?.name || "-"}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {totalQty}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {formatCurrency(
-                              Number(sale.fx_rate_used ?? 0),
-                              "ARS",
-                            )}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            <div className="flex items-center justify-end gap-1.5">
-                              {formatCurrency(totalSale, "USD")}
-                              {sale.income_pending && (
-                                <Badge variant="outline" className="border-amber-200 bg-amber-50 text-[10px] text-amber-700">
-                                  Pendiente
-                                </Badge>
-                              )}
-                            </div>
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {formatCurrency(totalCost, "USD")}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {sale.commission_usd != null
-                              ? formatCurrency(sale.commission_usd, "USD")
-                              : "No aplica"}
-                          </TableCell>
-                          <TableCell
-                            className={`text-right font-semibold ${
-                              net >= 0 ? "text-emerald-700" : "text-rose-700"
-                            }`}
-                          >
-                            {formatCurrency(net, "USD")}
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
-          </ScrollArea>
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {formatCurrency(totalCost, "USD")}
+                        </TableCell>
+                        <TableCell className="text-right hidden sm:table-cell">
+                          {sale.commission_usd != null
+                            ? formatCurrency(sale.commission_usd, "USD")
+                            : "No aplica"}
+                        </TableCell>
+                        <TableCell
+                          className={`text-right font-semibold ${
+                            net >= 0 ? "text-emerald-700" : "text-rose-700"
+                          }`}
+                        >
+                          {formatCurrency(net, "USD")}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 

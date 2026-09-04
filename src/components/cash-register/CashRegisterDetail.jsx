@@ -105,7 +105,7 @@ export default function CashRegisterDetail({ register, open, onOpenChange }) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="min-w-6xl max-h-[85vh] overflow-y-auto">
+      <DialogContent className="!w-[90vw] !max-w-[90vw] flex max-h-[85vh] flex-col p-4 sm:p-6">
         <DialogHeader>
           <DialogTitle>Detalle de Caja</DialogTitle>
           <DialogDescription>

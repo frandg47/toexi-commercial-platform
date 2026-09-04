@@ -10,7 +10,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Calendar } from "@/components/ui/calendar";
-import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
+import {
+  Popover,
+  PopoverTrigger,
+  PopoverContent,
+} from "@/components/ui/popover";
 import { IconHistory, IconRefresh, IconCalendar } from "@tabler/icons-react";
 import { format, startOfMonth, endOfMonth } from "date-fns";
 import { es } from "date-fns/locale";
@@ -56,8 +60,10 @@ export default function CashRegisterHistoryPanel() {
       .order("id", { ascending: false })
       .range(from, to);
 
-    if (dateRange?.from) query = query.gte("register_date", format(dateRange.from, "yyyy-MM-dd"));
-    if (dateRange?.to) query = query.lte("register_date", format(dateRange.to, "yyyy-MM-dd"));
+    if (dateRange?.from)
+      query = query.gte("register_date", format(dateRange.from, "yyyy-MM-dd"));
+    if (dateRange?.to)
+      query = query.lte("register_date", format(dateRange.to, "yyyy-MM-dd"));
     if (filters.userId !== "all") query = query.eq("user_id", filters.userId);
     if (filters.status !== "all") query = query.eq("status", filters.status);
 
@@ -107,35 +113,42 @@ export default function CashRegisterHistoryPanel() {
   const openCloseRegister = async (register) => {
     setCloseLoading(true);
 
-    const [movementsResponse, accountMovementsResponse, blueRateResponse, usdtRateResponse, cashAccountsResponse] =
-      await Promise.all([
-        supabase
-          .from("cash_register_movements")
-          .select("*, accounts!cash_register_movements_account_id_fkey(name, currency, is_efectivo, is_caja_virtual)")
-          .eq("cash_register_id", register.id)
-          .order("created_at", { ascending: true }),
-        supabase
-          .from("account_movements")
-          .select("*, accounts(name, currency)")
-          .in("related_table", ["cash_register", "cash_register_opening_adjustment"])
-          .eq("related_id", register.id),
-        supabase
-          .from("fx_rates")
-          .select("rate")
-          .eq("source", "blue")
-          .eq("is_active", true)
-          .maybeSingle(),
-        supabase
-          .from("accounts")
-          .select("id")
-          .eq("is_efectivo", true),
-        supabase
-          .from("fx_rates")
-          .select("rate")
-          .eq("source", "USDT")
-          .eq("is_active", true)
-          .maybeSingle(),
-      ]);
+    const [
+      movementsResponse,
+      accountMovementsResponse,
+      blueRateResponse,
+      usdtRateResponse,
+      cashAccountsResponse,
+    ] = await Promise.all([
+      supabase
+        .from("cash_register_movements")
+        .select(
+          "*, accounts!cash_register_movements_account_id_fkey(name, currency, is_efectivo, is_caja_virtual)",
+        )
+        .eq("cash_register_id", register.id)
+        .order("created_at", { ascending: true }),
+      supabase
+        .from("account_movements")
+        .select("*, accounts(name, currency)")
+        .in("related_table", [
+          "cash_register",
+          "cash_register_opening_adjustment",
+        ])
+        .eq("related_id", register.id),
+      supabase
+        .from("fx_rates")
+        .select("rate")
+        .eq("source", "blue")
+        .eq("is_active", true)
+        .maybeSingle(),
+      supabase.from("accounts").select("id").eq("is_efectivo", true),
+      supabase
+        .from("fx_rates")
+        .select("rate")
+        .eq("source", "USDT")
+        .eq("is_active", true)
+        .maybeSingle(),
+    ]);
 
     const error =
       movementsResponse.error ||
@@ -189,7 +202,9 @@ export default function CashRegisterHistoryPanel() {
 
       const { data: closedMovements, error: movementsError } = await supabase
         .from("cash_register_movements")
-        .select("*, accounts!cash_register_movements_account_id_fkey(name, currency, is_efectivo, is_caja_virtual)")
+        .select(
+          "*, accounts!cash_register_movements_account_id_fkey(name, currency, is_efectivo, is_caja_virtual)",
+        )
         .eq("cash_register_id", closeRegisterData.register.id)
         .order("created_at", { ascending: true });
 
@@ -198,7 +213,10 @@ export default function CashRegisterHistoryPanel() {
       await loadHistory();
       return {
         ok: true,
-        register: { ...updatedRegister, users: closeRegisterData.register.users },
+        register: {
+          ...updatedRegister,
+          users: closeRegisterData.register.users,
+        },
         movements: closedMovements || [],
       };
     } catch (error) {
@@ -209,134 +227,147 @@ export default function CashRegisterHistoryPanel() {
     }
   };
 
+  const getDefaultWeekRange = () => {
+    const start = new Date();
+    start.setDate(start.getDate() - start.getDay() + 1);
+    const end = new Date(start);
+    end.setDate(start.getDate() + 6);
+    return { from: start, to: end };
+  };
+
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
   return (
     <div className="@container/main flex flex-1 flex-col gap-4 py-6">
-      <Card className="">
-        <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <CardTitle className="flex items-center gap-2">
-            <IconHistory className="h-5 w-5" />
-            Historial de cajas
-          </CardTitle>
+      <div className="flex flex-col gap-3 sm:flex-row lg:items-center sm:justify-between">
+        <div className="flex gap-3">
+          <div className="flex-1">
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="outline"
+                  className="flex items-center gap-2 w-full min-w-[220px]"
+                >
+                  <IconCalendar className="h-4 w-4" />
+                  {dateRange?.from && dateRange?.to
+                    ? `${dateRange.from.toLocaleDateString("es-AR")} - ${dateRange.to.toLocaleDateString("es-AR")}`
+                    : "Filtrar por fecha"}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="p-3" align="start">
+                <Calendar
+                  mode="range"
+                  selected={dateRange}
+                  onSelect={setDateRange}
+                  locale={es}
+                  initialFocus
+                />
+              </PopoverContent>
+            </Popover>
+          </div>
+          {/* Filtro por estado */}
+          {/* Semana actual */}
+          <div className="hidden sm:flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setDateRange(getDefaultWeekRange())}
+              className="whitespace-nowrap"
+            >
+              Semana actual
+            </Button>
+            <Select
+              value={filters.status}
+              onValueChange={(value) => updateFilter("status", value)}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Todos los estados" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos</SelectItem>
+                <SelectItem value="open">Abiertas</SelectItem>
+                <SelectItem value="closed">Cerradas</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        <div className="flex w-full justify-end gap-3 lg:w-auto lg:justify-end">
+          <div className="sm:hidden">
+            <Select
+              value={filters.status}
+              onValueChange={(value) => updateFilter("status", value)}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Todos los estados" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos</SelectItem>
+                <SelectItem value="open">Abiertas</SelectItem>
+                <SelectItem value="closed">Cerradas</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <Button variant="outline" onClick={loadHistory} disabled={loading}>
+            <IconRefresh className="h-4 w-4" />
+            Actualizar
+          </Button>
+        </div>
+      </div>
+
+      <CashRegisterHistory
+        history={history}
+        loading={loading}
+        onViewDetail={(register) => {
+          setSelectedRegister(register);
+          setDetailOpen(true);
+        }}
+        onCloseRegister={openCloseRegister}
+      />
+
+      <div className="flex items-center justify-between text-sm text-muted-foreground">
+        <span>{totalCount} cajas encontradas</span>
+        <div className="flex items-center gap-2">
           <Button
             variant="outline"
             size="sm"
-            onClick={loadHistory}
-            disabled={loading}
+            disabled={page <= 1 || loading}
+            onClick={() => setPage((current) => current - 1)}
           >
-            <IconRefresh className="mr-1 h-4 w-4" />
-            Actualizar
+            Anterior
           </Button>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid gap-3 md:grid-cols-3">
-            <div className="space-y-1">
-              <span className="text-xs text-muted-foreground">Fecha</span>
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    className="flex items-center gap-2 w-full min-w-[220px]"
-                  >
-                    <IconCalendar className="h-4 w-4" />
-                    {dateRange?.from && dateRange?.to
-                      ? `${dateRange.from.toLocaleDateString("es-AR")} - ${dateRange.to.toLocaleDateString("es-AR")}`
-                      : "Filtrar por fecha"}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="p-3" align="start">
-                  <Calendar
-                    mode="range"
-                    selected={dateRange}
-                    onSelect={setDateRange}
-                    locale={es}
-                    initialFocus
-                  />
-                </PopoverContent>
-              </Popover>
-            </div>
-            <div className="space-y-1">
-              <span className="text-xs text-muted-foreground">Estado</span>
-              <Select
-                value={filters.status}
-                onValueChange={(value) => updateFilter("status", value)}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Todos los estados" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Todos</SelectItem>
-                  <SelectItem value="open">Abiertas</SelectItem>
-                  <SelectItem value="closed">Cerradas</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
+          <span>
+            {page} / {totalPages}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={page >= totalPages || loading}
+            onClick={() => setPage((current) => current + 1)}
+          >
+            Siguiente
+          </Button>
+        </div>
+      </div>
 
-          {/* <div className="flex justify-end">
-            <Button variant="ghost" size="sm" onClick={clearFilters}>
-              Limpiar filtros
-            </Button>
-          </div> */}
+      <CashRegisterDetail
+        register={selectedRegister}
+        open={detailOpen}
+        onOpenChange={setDetailOpen}
+      />
 
-          <CashRegisterHistory
-            history={history}
-            loading={loading}
-            onViewDetail={(register) => {
-              setSelectedRegister(register);
-              setDetailOpen(true);
-            }}
-            onCloseRegister={openCloseRegister}
-          />
-
-          <div className="flex items-center justify-between text-sm text-muted-foreground">
-            <span>{totalCount} cajas encontradas</span>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={page <= 1 || loading}
-                onClick={() => setPage((current) => current - 1)}
-              >
-                Anterior
-              </Button>
-              <span>
-                {page} / {totalPages}
-              </span>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={page >= totalPages || loading}
-                onClick={() => setPage((current) => current + 1)}
-              >
-                Siguiente
-              </Button>
-            </div>
-          </div>
-        </CardContent>
-
-        <CashRegisterDetail
-          register={selectedRegister}
-          open={detailOpen}
-          onOpenChange={setDetailOpen}
+      {closeRegisterData && (
+        <DialogCloseCashRegister
+          open={closeDialogOpen}
+          onOpenChange={setCloseDialogOpen}
+          register={closeRegisterData.register}
+          movements={closeRegisterData.movements}
+          onConfirm={closeHistoricalRegister}
+          loading={closeLoading}
+          exchangeRate={exchangeRate}
+          usdtRate={usdtRate}
+          accountMovements={closeRegisterData.accountMovements}
+          efectivoAccounts={closeRegisterData.efectivoAccounts}
         />
-
-        {closeRegisterData && (
-          <DialogCloseCashRegister
-            open={closeDialogOpen}
-            onOpenChange={setCloseDialogOpen}
-            register={closeRegisterData.register}
-            movements={closeRegisterData.movements}
-            onConfirm={closeHistoricalRegister}
-            loading={closeLoading}
-            exchangeRate={exchangeRate}
-            usdtRate={usdtRate}
-            accountMovements={closeRegisterData.accountMovements}
-            efectivoAccounts={closeRegisterData.efectivoAccounts}
-          />
-        )}
-      </Card>
+      )}
     </div>
   );
 }

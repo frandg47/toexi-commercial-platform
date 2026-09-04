@@ -191,7 +191,7 @@ const ProvidersTable = ({ onAdd }) => {
             disabled={refreshing}
           >
             <IconRefresh className={refreshing ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
-            Refrescar
+            Actualizar
           </Button>
           {onAdd}
         </div>

@@ -45,7 +45,14 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { Table, TableBody, TableCell, TableHeader, TableHead, TableRow } from "@/components/ui/table";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHeader,
+  TableHead,
+  TableRow,
+} from "@/components/ui/table";
 import { Calendar } from "@/components/ui/calendar";
 import { startOfMonth, endOfMonth, startOfWeek, endOfWeek } from "date-fns";
 import { es } from "date-fns/locale";
@@ -103,7 +110,7 @@ const getEffectiveRateForCurrency = (
   rateMode,
   manualFxRate,
   fxRate,
-  usdtRate
+  usdtRate,
 ) => {
   if (currency === "ARS") return 1;
   if (rateMode === "manual") {
@@ -194,7 +201,7 @@ const PurchasesConfig = () => {
     let query = supabase
       .from("purchases")
       .select(
-        "id, provider_id, purchase_date, total_amount, currency, total_amount_ars, fx_rate_used, notes, status, void_reason, voided_at, providers(name), purchase_payments(id, account_id, amount, currency, amount_ars, fx_rate_used)"
+        "id, provider_id, purchase_date, total_amount, currency, total_amount_ars, fx_rate_used, notes, status, void_reason, voided_at, providers(name), purchase_payments(id, account_id, amount, currency, amount_ars, fx_rate_used)",
       )
       .order("purchase_date", { ascending: false })
       .order("id", { ascending: false });
@@ -206,10 +213,16 @@ const PurchasesConfig = () => {
       query = query.eq("currency", filters.currency);
     }
     if (dateRange?.from) {
-      query = query.gte("purchase_date", dateRange.from.toISOString().slice(0, 10));
+      query = query.gte(
+        "purchase_date",
+        dateRange.from.toISOString().slice(0, 10),
+      );
     }
     if (dateRange?.to) {
-      query = query.lte("purchase_date", dateRange.to.toISOString().slice(0, 10));
+      query = query.lte(
+        "purchase_date",
+        dateRange.to.toISOString().slice(0, 10),
+      );
     }
 
     const { data, error } = await query;
@@ -239,7 +252,7 @@ const PurchasesConfig = () => {
         supabase
           .from("product_variants")
           .select(
-            "id, variant_name, color, storage, ram, products(name, active, inventory_tracking_mode)"
+            "id, variant_name, color, storage, ram, products(name, active, inventory_tracking_mode)",
           )
           .eq("active", true)
           .order("id", { ascending: true }),
@@ -257,14 +270,18 @@ const PurchasesConfig = () => {
           .maybeSingle(),
         supabase
           .from("accounts")
-          .select("id, name, currency, is_reference_capital, is_efectivo, is_caja_virtual, active")
+          .select(
+            "id, name, currency, is_reference_capital, is_efectivo, is_caja_virtual, active",
+          )
           .eq("is_reference_capital", false)
           .eq("active", true)
           .order("name", { ascending: true }),
       ]);
 
       setProviders(prov || []);
-      setVariants((vars || []).filter((variant) => variant.products?.active !== false));
+      setVariants(
+        (vars || []).filter((variant) => variant.products?.active !== false),
+      );
       setFxRate(rate?.rate ? Number(rate.rate) : null);
       setUsdtRate(usdt?.rate ? Number(usdt.rate) : null);
       setAccounts(accountsData || []);
@@ -290,14 +307,16 @@ const PurchasesConfig = () => {
   }, []);
 
   const displayAccounts = useMemo(() => {
-    if (isRegisterOpen) return accounts.filter((a) => !a.is_efectivo && !a.is_caja_virtual);
+    if (isRegisterOpen)
+      return accounts.filter((a) => !a.is_efectivo && !a.is_caja_virtual);
     return accounts;
   }, [accounts, isRegisterOpen]);
 
   const totalAmount = useMemo(() => {
     return items.reduce(
-      (acc, item) => acc + Number(item.quantity || 0) * Number(item.unit_cost || 0),
-      0
+      (acc, item) =>
+        acc + Number(item.quantity || 0) * Number(item.unit_cost || 0),
+      0,
     );
   }, [items]);
 
@@ -307,28 +326,47 @@ const PurchasesConfig = () => {
       form.rate_mode,
       form.manual_fx_rate,
       fxRate,
-      usdtRate
+      usdtRate,
     );
     if (form.currency !== "ARS" && !rate) return NaN;
     return form.currency === "ARS" ? totalAmount : totalAmount * rate;
-  }, [form.currency, form.manual_fx_rate, form.rate_mode, fxRate, totalAmount, usdtRate]);
+  }, [
+    form.currency,
+    form.manual_fx_rate,
+    form.rate_mode,
+    fxRate,
+    totalAmount,
+    usdtRate,
+  ]);
 
   const totalPaid = useMemo(
     () =>
       payments.reduce((acc, payment) => {
         const account = displayAccounts.find(
-          (item) => String(item.id) === String(payment.account_id || "")
+          (item) => String(item.id) === String(payment.account_id || ""),
         );
         const currency = account?.currency || form.currency;
         const amountArs = convertAmountToARS(
           payment.amount,
           currency,
-          form.rate_mode === "manual" ? resolveManualRate("USD", form.manual_fx_rate) : fxRate,
-          form.rate_mode === "manual" ? resolveManualRate("USDT", form.manual_fx_rate) : usdtRate
+          form.rate_mode === "manual"
+            ? resolveManualRate("USD", form.manual_fx_rate)
+            : fxRate,
+          form.rate_mode === "manual"
+            ? resolveManualRate("USDT", form.manual_fx_rate)
+            : usdtRate,
         );
         return acc + (Number.isFinite(amountArs) ? amountArs : 0);
       }, 0),
-    [displayAccounts, form.currency, form.manual_fx_rate, form.rate_mode, fxRate, payments, usdtRate]
+    [
+      displayAccounts,
+      form.currency,
+      form.manual_fx_rate,
+      form.rate_mode,
+      fxRate,
+      payments,
+      usdtRate,
+    ],
   );
 
   const handleAddItem = (variant) => {
@@ -348,9 +386,7 @@ const PurchasesConfig = () => {
 
   const handleUpdateItem = (id, field, value) => {
     setItems((prev) =>
-      prev.map((i) =>
-        i.variant_id === id ? { ...i, [field]: value } : i
-      )
+      prev.map((i) => (i.variant_id === id ? { ...i, [field]: value } : i)),
     );
   };
 
@@ -365,8 +401,8 @@ const PurchasesConfig = () => {
   const handleUpdatePayment = (index, field, value) => {
     setPayments((current) =>
       current.map((payment, paymentIndex) =>
-        paymentIndex === index ? { ...payment, [field]: value } : payment
-      )
+        paymentIndex === index ? { ...payment, [field]: value } : payment,
+      ),
     );
   };
 
@@ -377,33 +413,34 @@ const PurchasesConfig = () => {
     });
   };
 
-
-
   const handleSave = async () => {
     if (!form.provider_id) return toast.error("Selecciona un proveedor");
     if (!items.length) return toast.error("Agrega al menos un producto");
     if (
       items.some(
         (item) =>
-          Number(item.quantity || 0) <= 0 || Number(item.unit_cost || 0) < 0
+          Number(item.quantity || 0) <= 0 || Number(item.unit_cost || 0) < 0,
       )
     ) {
-      return toast.error("Completa cantidades y costos validos para todos los items");
+      return toast.error(
+        "Completa cantidades y costos validos para todos los items",
+      );
     }
     if (
       payments.some(
         (payment) =>
           payment.account_id &&
-          (!payment.account_id || Number(payment.amount || 0) <= 0)
+          (!payment.account_id || Number(payment.amount || 0) <= 0),
       )
     ) {
       return toast.error("Si agregas un pago, completa cuenta y monto");
     }
     if (
       payments.some((payment) => {
-        if (!payment.account_id || Number(payment.amount || 0) <= 0) return false;
+        if (!payment.account_id || Number(payment.amount || 0) <= 0)
+          return false;
         const account = displayAccounts.find(
-          (item) => String(item.id) === String(payment.account_id || "")
+          (item) => String(item.id) === String(payment.account_id || ""),
         );
         if (!account) return true;
         if (
@@ -413,7 +450,7 @@ const PurchasesConfig = () => {
             form.rate_mode,
             form.manual_fx_rate,
             fxRate,
-            usdtRate
+            usdtRate,
           )
         ) {
           return true;
@@ -422,7 +459,7 @@ const PurchasesConfig = () => {
       })
     ) {
       return toast.error(
-        "Falta cotizacion activa para alguna de las cuentas elegidas"
+        "Falta cotizacion activa para alguna de las cuentas elegidas",
       );
     }
 
@@ -432,7 +469,7 @@ const PurchasesConfig = () => {
       form.rate_mode,
       form.manual_fx_rate,
       fxRate,
-      usdtRate
+      usdtRate,
     );
     if (currency !== "ARS" && !rate) {
       return toast.error(`No hay cotizacion activa para ${currency}`);
@@ -449,7 +486,7 @@ const PurchasesConfig = () => {
         }
         if (duplicateIdentifiers.has(normalized)) {
           return toast.error(
-            `El IMEI/SN ${identifier} esta repetido en la compra`
+            `El IMEI/SN ${identifier} esta repetido en la compra`,
           );
         }
         duplicateIdentifiers.add(normalized);
@@ -457,30 +494,34 @@ const PurchasesConfig = () => {
     }
 
     const paymentRows = payments
-      .filter((payment) => payment.account_id && Number(payment.amount || 0) > 0)
+      .filter(
+        (payment) => payment.account_id && Number(payment.amount || 0) > 0,
+      )
       .map((payment) => {
-      const account = displayAccounts.find(
-        (item) => String(item.id) === String(payment.account_id || "")
-      );
-      const paymentAmount = Number(payment.amount || 0);
-      const paymentCurrency = account?.currency || currency;
-      const paymentRate = getEffectiveRateForCurrency(
-        paymentCurrency,
-        form.rate_mode,
-        form.manual_fx_rate,
-        fxRate,
-        usdtRate
-      );
-      return {
-        account_id: Number(payment.account_id),
-        payment_method_id: null,
-        amount: paymentAmount,
-        currency: paymentCurrency,
-        amount_ars:
-          paymentCurrency === "ARS" ? paymentAmount : paymentAmount * paymentRate,
-        fx_rate_used: paymentCurrency === "ARS" ? null : paymentRate,
-      };
-    });
+        const account = displayAccounts.find(
+          (item) => String(item.id) === String(payment.account_id || ""),
+        );
+        const paymentAmount = Number(payment.amount || 0);
+        const paymentCurrency = account?.currency || currency;
+        const paymentRate = getEffectiveRateForCurrency(
+          paymentCurrency,
+          form.rate_mode,
+          form.manual_fx_rate,
+          fxRate,
+          usdtRate,
+        );
+        return {
+          account_id: Number(payment.account_id),
+          payment_method_id: null,
+          amount: paymentAmount,
+          currency: paymentCurrency,
+          amount_ars:
+            paymentCurrency === "ARS"
+              ? paymentAmount
+              : paymentAmount * paymentRate,
+          fx_rate_used: paymentCurrency === "ARS" ? null : paymentRate,
+        };
+      });
 
     const payloadItems = items.map((item) => ({
       variant_id: item.variant_id,
@@ -491,17 +532,20 @@ const PurchasesConfig = () => {
         : [],
     }));
 
-    const { error } = await supabase.rpc("create_purchase_with_inventory_units", {
-      p_provider_id: Number(form.provider_id),
-      p_purchase_date: form.purchase_date,
-      p_currency: currency,
-      p_total_amount: totalAmount,
-      p_total_amount_ars: totalAmountArs,
-      p_fx_rate_used: currency === "ARS" ? null : rate,
-      p_notes: form.notes || null,
-      p_items: payloadItems,
-      p_payments: paymentRows,
-    });
+    const { error } = await supabase.rpc(
+      "create_purchase_with_inventory_units",
+      {
+        p_provider_id: Number(form.provider_id),
+        p_purchase_date: form.purchase_date,
+        p_currency: currency,
+        p_total_amount: totalAmount,
+        p_total_amount_ars: totalAmountArs,
+        p_fx_rate_used: currency === "ARS" ? null : rate,
+        p_notes: form.notes || null,
+        p_items: payloadItems,
+        p_payments: paymentRows,
+      },
+    );
 
     if (error) {
       toast.error("No se pudo registrar la compra", {
@@ -533,7 +577,7 @@ const PurchasesConfig = () => {
     const { data, error } = await supabase
       .from("purchase_items")
       .select(
-        "id, quantity, unit_cost, subtotal, product_variants(variant_name, color, storage, ram, products(name, inventory_tracking_mode))"
+        "id, quantity, unit_cost, subtotal, product_variants(variant_name, color, storage, ram, products(name, inventory_tracking_mode))",
       )
       .eq("purchase_id", purchase.id)
       .order("id", { ascending: true });
@@ -556,8 +600,6 @@ const PurchasesConfig = () => {
       to: endOfWeek(new Date(), { weekStartsOn: 1 }),
     });
   };
-
-
 
   const handleCancelPurchase = async () => {
     if (!cancelingPurchase?.id) return;
@@ -606,7 +648,7 @@ const PurchasesConfig = () => {
     const { data: itemsData, error: itemsError } = await supabase
       .from("purchase_items")
       .select(
-        "id, variant_id, quantity, unit_cost, subtotal, product_variants(id, variant_name, color, storage, ram, products(name, inventory_tracking_mode))"
+        "id, variant_id, quantity, unit_cost, subtotal, product_variants(id, variant_name, color, storage, ram, products(name, inventory_tracking_mode))",
       )
       .eq("purchase_id", purchase.id)
       .order("id", { ascending: true });
@@ -621,7 +663,9 @@ const PurchasesConfig = () => {
 
     const itemsWithSerials = await Promise.all(
       (itemsData || []).map(async (item) => {
-        if (item.product_variants?.products?.inventory_tracking_mode !== "serial") {
+        if (
+          item.product_variants?.products?.inventory_tracking_mode !== "serial"
+        ) {
           return { ...item, enteredSerials: [], pendingCount: 0 };
         }
         const { data: serials } = await supabase
@@ -635,7 +679,7 @@ const PurchasesConfig = () => {
           enteredSerials: entered,
           pendingCount: item.quantity - entered.length,
         };
-      })
+      }),
     );
 
     setCompleteItems(itemsWithSerials);
@@ -647,7 +691,7 @@ const PurchasesConfig = () => {
     return (
       completingPurchase.purchase_payments?.reduce(
         (acc, p) => acc + Number(p.amount_ars || 0),
-        0
+        0,
       ) || 0
     );
   }, [completingPurchase]);
@@ -656,19 +700,19 @@ const PurchasesConfig = () => {
     () =>
       Math.max(
         Number(completingPurchase?.total_amount_ars || 0) - completeTotalPaid,
-        0
+        0,
       ),
-    [completingPurchase, completeTotalPaid]
+    [completingPurchase, completeTotalPaid],
   );
 
   const completePendingSerials = useMemo(
     () => completeItems.filter((item) => item.pendingCount > 0),
-    [completeItems]
+    [completeItems],
   );
 
   const handleAddCompletePayment = async () => {
     const validPayments = completePayments.filter(
-      (p) => p.account_id && Number(p.amount || 0) > 0
+      (p) => p.account_id && Number(p.amount || 0) > 0,
     );
     if (validPayments.length === 0) {
       return toast.error("Agrega al menos un pago valido");
@@ -676,7 +720,7 @@ const PurchasesConfig = () => {
 
     for (const payment of validPayments) {
       const account = displayAccounts.find(
-        (a) => String(a.id) === String(payment.account_id)
+        (a) => String(a.id) === String(payment.account_id),
       );
       if (!account) {
         return toast.error("Cuenta no encontrada");
@@ -688,7 +732,7 @@ const PurchasesConfig = () => {
           completingPurchase.rate_mode || "system",
           completingPurchase.manual_fx_rate,
           fxRate,
-          usdtRate
+          usdtRate,
         )
       ) {
         return toast.error(`No hay cotizacion para ${account.currency}`);
@@ -699,15 +743,16 @@ const PurchasesConfig = () => {
     try {
       for (const payment of validPayments) {
         const account = displayAccounts.find(
-          (a) => String(a.id) === String(payment.account_id)
+          (a) => String(a.id) === String(payment.account_id),
         );
-        const paymentCurrency = account?.currency || completingPurchase.currency;
+        const paymentCurrency =
+          account?.currency || completingPurchase.currency;
         const paymentRate = getEffectiveRateForCurrency(
           paymentCurrency,
           completingPurchase.rate_mode || "system",
           completingPurchase.manual_fx_rate,
           fxRate,
-          usdtRate
+          usdtRate,
         );
         const paymentAmount = Number(payment.amount || 0);
 
@@ -717,7 +762,9 @@ const PurchasesConfig = () => {
           p_amount: paymentAmount,
           p_currency: paymentCurrency,
           p_amount_ars:
-            paymentCurrency === "ARS" ? paymentAmount : paymentAmount * paymentRate,
+            paymentCurrency === "ARS"
+              ? paymentAmount
+              : paymentAmount * paymentRate,
           p_fx_rate_used: paymentCurrency === "ARS" ? null : paymentRate,
         });
 
@@ -767,7 +814,9 @@ const PurchasesConfig = () => {
 
       if (error) throw error;
 
-      toast.success(`${data?.inserted || identifiers.length} IMEI/SN agregados`);
+      toast.success(
+        `${data?.inserted || identifiers.length} IMEI/SN agregados`,
+      );
 
       const updatedItem = {
         ...completeActiveItem,
@@ -775,12 +824,15 @@ const PurchasesConfig = () => {
           ...completeActiveItem.enteredSerials,
           ...identifiers.map((id) => ({ identifier_value: id })),
         ],
-        pendingCount: Math.max(completeActiveItem.pendingCount - identifiers.length, 0),
+        pendingCount: Math.max(
+          completeActiveItem.pendingCount - identifiers.length,
+          0,
+        ),
       };
       setCompleteItems((prev) =>
         prev.map((item) =>
-          item.id === completeActiveItem.id ? updatedItem : item
-        )
+          item.id === completeActiveItem.id ? updatedItem : item,
+        ),
       );
       setCompleteActiveItem(updatedItem);
       setCompleteSerialText("");
@@ -835,46 +887,226 @@ const PurchasesConfig = () => {
   }
 
   const filteredVariants = variants.filter((v) => {
-    const name = `${v.products?.name || ""} ${v.variant_name || ""} ${v.color || ""}`
-      .toLowerCase()
-      .trim();
+    const name =
+      `${v.products?.name || ""} ${v.variant_name || ""} ${v.color || ""}`
+        .toLowerCase()
+        .trim();
     return name.includes(searchVariant.toLowerCase());
   });
 
   return (
     <div className="mt-6 space-y-6">
+      <div>
+        <div className="space-y-4">
+          <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="grid gap-1">
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      className="flex items-center gap-2 min-w-[220px]"
+                    >
+                      <IconCalendar className="h-4 w-4" />
+                      {dateRange?.from && dateRange?.to
+                        ? `${dateRange.from.toLocaleDateString("es-AR")} - ${dateRange.to.toLocaleDateString("es-AR")}`
+                        : "Filtrar por fecha"}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="p-3" align="start">
+                    <Calendar
+                      mode="range"
+                      selected={dateRange}
+                      onSelect={setDateRange}
+                      locale={es}
+                      initialFocus
+                    />
+                  </PopoverContent>
+                </Popover>
+              </div>
+              <div className="grid gap-1">
+                <Button variant="outline" onClick={handleWeekFilter}>
+                  Semana actual
+                </Button>
+              </div>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-3 md:justify-end">
+              <div className="grid gap-1">
+                <Select
+                  value={filters.providerId}
+                  onValueChange={(value) =>
+                    setFilters((current) => ({ ...current, providerId: value }))
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Proveedor" />
+                  </SelectTrigger>
+                  <SelectContent className="z-[9999]">
+                    <SelectItem value="all">Todos los prov.</SelectItem>
+                    {providers.map((provider) => (
+                      <SelectItem key={provider.id} value={String(provider.id)}>
+                        {provider.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid gap-1">
+                <Select
+                  value={filters.currency}
+                  onValueChange={(value) =>
+                    setFilters((current) => ({ ...current, currency: value }))
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Moneda" />
+                  </SelectTrigger>
+                  <SelectContent className="z-[9999]">
+                    <SelectItem value="all">Todas las mon.</SelectItem>
+                    <SelectItem value="ARS">ARS</SelectItem>
+                    <SelectItem value="USD">USD</SelectItem>
+                    <SelectItem value="USDT">USDT</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex justify-end">
+                <Button
+                  onClick={loadPurchases}
+                  disabled={loading}
+                  variant="outline"
+                >
+                  <IconRefresh className="h-4 w-4" />
+                  {loading ? "Cargando..." : "Actualizar"}
+                </Button>
+              </div>
+            </div>
+          </div>
+          <div className="rounded-md border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Fecha</TableHead>
+                  <TableHead>Proveedor</TableHead>
+                  <TableHead>Estado</TableHead>
+                  <TableHead>Total</TableHead>
+                  <TableHead>Notas</TableHead>
+                  <TableHead className="text-right">Acciones</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {purchases.map((p) => (
+                  <TableRow
+                    key={p.id}
+                    className={`cursor-pointer ${p.status === "cancelled" ? "bg-rose-50/50" : ""}`}
+                    onClick={() => openPurchaseDetail(p)}
+                  >
+                    <TableCell>{p.purchase_date}</TableCell>
+                    <TableCell>{p.providers?.name || "-"}</TableCell>
+                    <TableCell>{getPurchaseStatusBadge(p.status)}</TableCell>
+                    <TableCell>
+                      {p.currency === "USD"
+                        ? `USD ${Number(p.total_amount || 0).toFixed(2)}`
+                        : p.currency === "USDT"
+                          ? formatUSDT(p.total_amount)
+                          : formatARS(p.total_amount)}
+                    </TableCell>
+                    <TableCell>{p.notes || "-"}</TableCell>
+                    <TableCell className="text-right">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            className="h-8 w-8 p-0"
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            <IconDotsVertical size={18} />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-44">
+                          <DropdownMenuLabel>Acciones</DropdownMenuLabel>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            disabled={p.status === "cancelled"}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              openCompletePurchase(p);
+                            }}
+                          >
+                            <IconEdit className="mr-2 h-4 w-4" />
+                            Completar
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            disabled={p.status === "cancelled"}
+                            className="text-rose-700 focus:text-rose-700"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setCancelingPurchase(p);
+                              setCancelReason("");
+                              setCancelOpen(true);
+                            }}
+                          >
+                            <IconTrash className="mr-2 h-4 w-4" />
+                            Anular
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {purchases.length === 0 && (
+                  <TableRow>
+                    <TableCell
+                      colSpan={6}
+                      className="text-center text-muted-foreground"
+                    >
+                      No hay compras registradas.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
+      </div>
       <Card>
         <CardHeader>
           <CardTitle>Registrar compra</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-            <div className="grid gap-3 md:grid-cols-5">
-              <div className="grid gap-1">
-                <Label htmlFor="purchase-date" className="text-xs text-muted-foreground">
-                  Fecha
-                </Label>
-                <Input
-                  id="purchase-date"
-                  type="date"
-                  value={form.purchase_date}
-                  onChange={(e) =>
+          <div className="grid gap-3 md:grid-cols-5">
+            <div className="grid gap-1">
+              <Label
+                htmlFor="purchase-date"
+                className="text-xs text-muted-foreground"
+              >
+                Fecha
+              </Label>
+              <Input
+                id="purchase-date"
+                type="date"
+                value={form.purchase_date}
+                onChange={(e) =>
                   setForm((f) => ({ ...f, purchase_date: e.target.value }))
                 }
               />
             </div>
-              <div className="grid gap-1">
-                <Label htmlFor="purchase-provider" className="text-xs text-muted-foreground">
-                  Proveedor
-                </Label>
-                <Select
-                  value={form.provider_id}
-                  onValueChange={(value) =>
-                    setForm((f) => ({ ...f, provider_id: value }))
-                  }
-                >
-                  <SelectTrigger id="purchase-provider">
-                    <SelectValue placeholder="Proveedor" />
-                  </SelectTrigger>
+            <div className="grid gap-1">
+              <Label
+                htmlFor="purchase-provider"
+                className="text-xs text-muted-foreground"
+              >
+                Proveedor
+              </Label>
+              <Select
+                value={form.provider_id}
+                onValueChange={(value) =>
+                  setForm((f) => ({ ...f, provider_id: value }))
+                }
+              >
+                <SelectTrigger id="purchase-provider">
+                  <SelectValue placeholder="Proveedor" />
+                </SelectTrigger>
                 <SelectContent className="z-[9999]">
                   {providers.map((p) => (
                     <SelectItem key={p.id} value={String(p.id)}>
@@ -884,19 +1116,22 @@ const PurchasesConfig = () => {
                 </SelectContent>
               </Select>
             </div>
-              <div className="grid gap-1">
-                <Label htmlFor="purchase-currency" className="text-xs text-muted-foreground">
-                  Moneda
-                </Label>
-                <Select
-                  value={form.currency}
-                  onValueChange={(value) =>
-                    setForm((f) => ({ ...f, currency: value }))
-                  }
-                >
-                  <SelectTrigger id="purchase-currency">
-                    <SelectValue placeholder="Moneda" />
-                  </SelectTrigger>
+            <div className="grid gap-1">
+              <Label
+                htmlFor="purchase-currency"
+                className="text-xs text-muted-foreground"
+              >
+                Moneda
+              </Label>
+              <Select
+                value={form.currency}
+                onValueChange={(value) =>
+                  setForm((f) => ({ ...f, currency: value }))
+                }
+              >
+                <SelectTrigger id="purchase-currency">
+                  <SelectValue placeholder="Moneda" />
+                </SelectTrigger>
                 <SelectContent className="z-[9999]">
                   <SelectItem value="ARS">ARS</SelectItem>
                   <SelectItem value="USD">USD</SelectItem>
@@ -904,28 +1139,34 @@ const PurchasesConfig = () => {
                 </SelectContent>
               </Select>
             </div>
-              <div className="grid gap-1">
-                <Label htmlFor="purchase-total" className="text-xs text-muted-foreground">
-                  Total
-                </Label>
-                <Input
-                  id="purchase-total"
-                  placeholder="Total"
-                  value={formatByCurrency(form.currency, totalAmount)}
-                  readOnly
-                />
-              </div>
-              <div className="grid gap-1">
-                <Label htmlFor="purchase-paid" className="text-xs text-muted-foreground">
-                  Pagado
-                </Label>
-                <Input
-                  id="purchase-paid"
-                  value={totalPaid > 0 ? formatARS(totalPaid) : "Sin pagos"}
-                  readOnly
-                />
-              </div>
+            <div className="grid gap-1">
+              <Label
+                htmlFor="purchase-total"
+                className="text-xs text-muted-foreground"
+              >
+                Total
+              </Label>
+              <Input
+                id="purchase-total"
+                placeholder="Total"
+                value={formatByCurrency(form.currency, totalAmount)}
+                readOnly
+              />
             </div>
+            <div className="grid gap-1">
+              <Label
+                htmlFor="purchase-paid"
+                className="text-xs text-muted-foreground"
+              >
+                Pagado
+              </Label>
+              <Input
+                id="purchase-paid"
+                value={totalPaid > 0 ? formatARS(totalPaid) : "Sin pagos"}
+                readOnly
+              />
+            </div>
+          </div>
 
           <div className="relative">
             <Input
@@ -981,8 +1222,8 @@ const PurchasesConfig = () => {
                 {items.map((item) => (
                   <TableRow key={item.variant_id}>
                     <TableCell>
-                      {item.variant?.products?.name} {item.variant?.variant_name}{" "}
-                      {item.variant?.color}
+                      {item.variant?.products?.name}{" "}
+                      {item.variant?.variant_name} {item.variant?.color}
                       <div className="mt-1 text-xs text-muted-foreground">
                         {isSerialTrackedVariant(item.variant)
                           ? "Serializado"
@@ -994,7 +1235,11 @@ const PurchasesConfig = () => {
                         type="number"
                         value={item.quantity}
                         onChange={(e) =>
-                          handleUpdateItem(item.variant_id, "quantity", e.target.value)
+                          handleUpdateItem(
+                            item.variant_id,
+                            "quantity",
+                            e.target.value,
+                          )
                         }
                       />
                     </TableCell>
@@ -1004,7 +1249,11 @@ const PurchasesConfig = () => {
                         step="0.01"
                         value={item.unit_cost}
                         onChange={(e) =>
-                          handleUpdateItem(item.variant_id, "unit_cost", e.target.value)
+                          handleUpdateItem(
+                            item.variant_id,
+                            "unit_cost",
+                            e.target.value,
+                          )
                         }
                       />
                     </TableCell>
@@ -1014,9 +1263,12 @@ const PurchasesConfig = () => {
                         : form.currency === "USDT"
                           ? formatUSDT(
                               Number(item.quantity || 0) *
-                                Number(item.unit_cost || 0)
+                                Number(item.unit_cost || 0),
                             )
-                        : formatARS(Number(item.quantity || 0) * Number(item.unit_cost || 0))}
+                          : formatARS(
+                              Number(item.quantity || 0) *
+                                Number(item.unit_cost || 0),
+                            )}
                     </TableCell>
                     <TableCell className="text-right">
                       <Button
@@ -1043,12 +1295,13 @@ const PurchasesConfig = () => {
                               handleUpdateItem(
                                 item.variant_id,
                                 "identifiersText",
-                                e.target.value
+                                e.target.value,
                               )
                             }
                           />
                           <div className="text-xs text-muted-foreground">
-                            Cargados: {parseIdentifiers(item.identifiersText).length} /{" "}
+                            Cargados:{" "}
+                            {parseIdentifiers(item.identifiersText).length} /{" "}
                             {Number(item.quantity || 0)}
                           </div>
                         </div>
@@ -1057,7 +1310,10 @@ const PurchasesConfig = () => {
                   ))}
                 {items.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={5} className="text-center text-muted-foreground">
+                    <TableCell
+                      colSpan={5}
+                      className="text-center text-muted-foreground"
+                    >
                       Agrega productos a la compra.
                     </TableCell>
                   </TableRow>
@@ -1067,27 +1323,35 @@ const PurchasesConfig = () => {
           </div>
 
           <div className="grid gap-1">
-            <Label htmlFor="purchase-notes" className="text-xs text-muted-foreground">
+            <Label
+              htmlFor="purchase-notes"
+              className="text-xs text-muted-foreground"
+            >
               Notas
             </Label>
             <Textarea
               id="purchase-notes"
               placeholder="Notas"
               value={form.notes}
-              onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, notes: e.target.value }))
+              }
             />
           </div>
 
           <div className="grid gap-3 rounded-md border p-4 md:grid-cols-3">
             <div className="grid gap-1">
-              <Label className="text-xs text-muted-foreground">Cotizacion</Label>
+              <Label className="text-xs text-muted-foreground">
+                Cotizacion
+              </Label>
               <Select
                 value={form.rate_mode}
                 onValueChange={(value) =>
                   setForm((current) => ({
                     ...current,
                     rate_mode: value,
-                    manual_fx_rate: value === "manual" ? current.manual_fx_rate : "",
+                    manual_fx_rate:
+                      value === "manual" ? current.manual_fx_rate : "",
                   }))
                 }
               >
@@ -1121,8 +1385,17 @@ const PurchasesConfig = () => {
               </div>
             )}
             <div className="grid gap-1">
-              <Label className="text-xs text-muted-foreground">Total equiv. ARS</Label>
-              <Input value={Number.isFinite(totalAmountArs) ? formatARS(totalAmountArs) : "-"} readOnly />
+              <Label className="text-xs text-muted-foreground">
+                Total equiv. ARS
+              </Label>
+              <Input
+                value={
+                  Number.isFinite(totalAmountArs)
+                    ? formatARS(totalAmountArs)
+                    : "-"
+                }
+                readOnly
+              />
             </div>
           </div>
 
@@ -1131,21 +1404,30 @@ const PurchasesConfig = () => {
               <div>
                 <h4 className="text-sm font-medium">Pagos de la compra</h4>
                 <p className="text-xs text-muted-foreground">
-                  Opcional. Podes agregar pagos ahora o completarlos despues desde el historial.
+                  Opcional. Podes agregar pagos ahora o completarlos despues
+                  desde el historial.
                 </p>
               </div>
-              <Button type="button" variant="outline" size="sm" onClick={handleAddPayment}>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleAddPayment}
+              >
                 <IconPlus className="h-4 w-4" />
                 Agregar pago
               </Button>
             </div>
-            {payments.filter(p => p.account_id || p.amount).length === 0 && (
+            {payments.filter((p) => p.account_id || p.amount).length === 0 && (
               <div className="text-xs text-muted-foreground italic">
                 Sin pagos registrados. Se podran agregar despues.
               </div>
             )}
             {payments.map((payment, index) => (
-              <div key={index} className="space-y-3 rounded-md border bg-muted/40 p-3">
+              <div
+                key={index}
+                className="space-y-3 rounded-md border bg-muted/40 p-3"
+              >
                 <div className="flex items-center gap-2">
                   <Select
                     value={payment.account_id}
@@ -1199,15 +1481,16 @@ const PurchasesConfig = () => {
                     convertAmountToARS(
                       payment.amount,
                       displayAccounts.find(
-                        (acc) => String(acc.id) === String(payment.account_id || "")
+                        (acc) =>
+                          String(acc.id) === String(payment.account_id || ""),
                       )?.currency || "ARS",
                       form.rate_mode === "manual"
                         ? resolveManualRate("USD", form.manual_fx_rate)
                         : fxRate,
                       form.rate_mode === "manual"
                         ? resolveManualRate("USDT", form.manual_fx_rate)
-                        : usdtRate
-                    )
+                        : usdtRate,
+                    ),
                   )}
                 </div>
               </div>
@@ -1218,189 +1501,19 @@ const PurchasesConfig = () => {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Compras</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-            <div className="flex flex-wrap items-end gap-3">
-              <div className="grid gap-1">
-                <span className="text-xs text-muted-foreground">Fecha</span>
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="outline"
-                      className="flex items-center gap-2 min-w-[220px]"
-                    >
-                      <IconCalendar className="h-4 w-4" />
-                      {dateRange?.from && dateRange?.to
-                        ? `${dateRange.from.toLocaleDateString("es-AR")} - ${dateRange.to.toLocaleDateString("es-AR")}`
-                        : "Filtrar por fecha"}
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="p-3" align="start">
-                    <Calendar
-                      mode="range"
-                      selected={dateRange}
-                      onSelect={setDateRange}
-                      locale={es}
-                      initialFocus
-                    />
-                  </PopoverContent>
-                </Popover>
-              </div>
-              <div className="grid gap-1">
-                <span className="text-xs text-muted-foreground">Semana</span>
-                <Button variant="outline" onClick={handleWeekFilter}>
-                  Semana actual
-                </Button>
-              </div>
-            </div>
-
-            <div className="grid gap-3 md:grid-cols-3 md:justify-end">
-              <div className="grid gap-1">
-                <span className="text-xs text-muted-foreground">Proveedor</span>
-                <Select
-                  value={filters.providerId}
-                  onValueChange={(value) =>
-                    setFilters((current) => ({ ...current, providerId: value }))
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Proveedor" />
-                  </SelectTrigger>
-                  <SelectContent className="z-[9999]">
-                    <SelectItem value="all">Todos</SelectItem>
-                    {providers.map((provider) => (
-                      <SelectItem key={provider.id} value={String(provider.id)}>
-                        {provider.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid gap-1">
-                <span className="text-xs text-muted-foreground">Moneda</span>
-                <Select
-                  value={filters.currency}
-                  onValueChange={(value) =>
-                    setFilters((current) => ({ ...current, currency: value }))
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Moneda" />
-                  </SelectTrigger>
-                  <SelectContent className="z-[9999]">
-                    <SelectItem value="all">Todas</SelectItem>
-                    <SelectItem value="ARS">ARS</SelectItem>
-                    <SelectItem value="USD">USD</SelectItem>
-                    <SelectItem value="USDT">USDT</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid gap-1">
-                <span className="text-xs text-muted-foreground">Actualizar</span>
-                <Button onClick={loadPurchases} disabled={loading}>
-                  <IconRefresh className="h-4 w-4" />
-                  {loading ? "Cargando..." : "Actualizar"}
-                </Button>
-              </div>
-            </div>
-          </div>
-          <div className="rounded-md border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Fecha</TableHead>
-                  <TableHead>Proveedor</TableHead>
-                  <TableHead>Estado</TableHead>
-                  <TableHead>Total</TableHead>
-                  <TableHead>Notas</TableHead>
-                  <TableHead className="text-right">Acciones</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {purchases.map((p) => (
-                  <TableRow
-                    key={p.id}
-                    className={`cursor-pointer ${p.status === "cancelled" ? "bg-rose-50/50" : ""}`}
-                    onClick={() => openPurchaseDetail(p)}
-                    >
-                      <TableCell>{p.purchase_date}</TableCell>
-                      <TableCell>{p.providers?.name || "-"}</TableCell>
-                      <TableCell>{getPurchaseStatusBadge(p.status)}</TableCell>
-                    <TableCell>
-                      {p.currency === "USD"
-                        ? `USD ${Number(p.total_amount || 0).toFixed(2)}`
-                        : p.currency === "USDT"
-                          ? formatUSDT(p.total_amount)
-                        : formatARS(p.total_amount)}
-                      </TableCell>
-                      <TableCell>{p.notes || "-"}</TableCell>
-                      <TableCell className="text-right">
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              className="h-8 w-8 p-0"
-                              onClick={(event) => event.stopPropagation()}
-                            >
-                              <IconDotsVertical size={18} />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" className="w-44">
-                            <DropdownMenuLabel>Acciones</DropdownMenuLabel>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              disabled={p.status === "cancelled"}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                openCompletePurchase(p);
-                              }}
-                            >
-                              <IconEdit className="mr-2 h-4 w-4" />
-                              Completar
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              disabled={p.status === "cancelled"}
-                              className="text-rose-700 focus:text-rose-700"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                setCancelingPurchase(p);
-                                setCancelReason("");
-                                setCancelOpen(true);
-                              }}
-                            >
-                              <IconTrash className="mr-2 h-4 w-4" />
-                              Anular
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                {purchases.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={6} className="text-center text-muted-foreground">
-                      No hay compras registradas.
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          </div>
-        </CardContent>
-      </Card>
-
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
         <DialogContent className="w-[90vw] sm:max-w-xl md:max-w-2xl max-h-[85svh] overflow-y-auto rounded-2xl p-4 sm:p-6">
           <DialogHeader>
             <DialogTitle>Detalle de compra</DialogTitle>
           </DialogHeader>
           <div className="space-y-2 text-sm">
-            <div><strong>Proveedor:</strong> {detailPurchase?.providers?.name || "-"}</div>
-            <div><strong>Fecha:</strong> {detailPurchase?.purchase_date || "-"}</div>
+            <div>
+              <strong>Proveedor:</strong>{" "}
+              {detailPurchase?.providers?.name || "-"}
+            </div>
+            <div>
+              <strong>Fecha:</strong> {detailPurchase?.purchase_date || "-"}
+            </div>
             <div>
               <strong>Estado:</strong>{" "}
               {detailPurchase?.status === "cancelled"
@@ -1415,10 +1528,12 @@ const PurchasesConfig = () => {
                 ? formatUSD(detailPurchase?.total_amount)
                 : detailPurchase?.currency === "USDT"
                   ? formatUSDT(detailPurchase?.total_amount)
-                : formatARS(detailPurchase?.total_amount)}
+                  : formatARS(detailPurchase?.total_amount)}
             </div>
             {detailPurchase?.void_reason && (
-              <div><strong>Motivo:</strong> {detailPurchase.void_reason}</div>
+              <div>
+                <strong>Motivo:</strong> {detailPurchase.void_reason}
+              </div>
             )}
           </div>
           <div className="rounded-md border overflow-auto">
@@ -1435,7 +1550,10 @@ const PurchasesConfig = () => {
               <TableBody>
                 {detailLoading && (
                   <TableRow>
-                    <TableCell colSpan={5} className="text-center text-muted-foreground">
+                    <TableCell
+                      colSpan={5}
+                      className="text-center text-muted-foreground"
+                    >
                       Cargando items...
                     </TableCell>
                   </TableRow>
@@ -1443,9 +1561,14 @@ const PurchasesConfig = () => {
                 {!detailLoading &&
                   detailItems.map((item) => (
                     <TableRow key={item.id}>
-                      <TableCell>{item.product_variants?.products?.name || "-"}</TableCell>
                       <TableCell>
-                        {[item.product_variants?.variant_name, item.product_variants?.color]
+                        {item.product_variants?.products?.name || "-"}
+                      </TableCell>
+                      <TableCell>
+                        {[
+                          item.product_variants?.variant_name,
+                          item.product_variants?.color,
+                        ]
                           .filter(Boolean)
                           .join(" ")}
                       </TableCell>
@@ -1455,20 +1578,23 @@ const PurchasesConfig = () => {
                           ? formatUSD(item.unit_cost)
                           : detailPurchase?.currency === "USDT"
                             ? formatUSDT(item.unit_cost)
-                          : formatARS(item.unit_cost)}
+                            : formatARS(item.unit_cost)}
                       </TableCell>
                       <TableCell>
                         {detailPurchase?.currency === "USD"
                           ? formatUSD(item.subtotal)
                           : detailPurchase?.currency === "USDT"
                             ? formatUSDT(item.subtotal)
-                          : formatARS(item.subtotal)}
+                            : formatARS(item.subtotal)}
                       </TableCell>
                     </TableRow>
                   ))}
                 {!detailLoading && detailItems.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={5} className="text-center text-muted-foreground">
+                    <TableCell
+                      colSpan={5}
+                      className="text-center text-muted-foreground"
+                    >
                       No hay items registrados.
                     </TableCell>
                   </TableRow>
@@ -1494,17 +1620,35 @@ const PurchasesConfig = () => {
       >
         <DialogContent className="w-[90vw] sm:max-w-4xl max-h-[85svh] overflow-y-auto rounded-2xl p-4 sm:p-6">
           <DialogHeader>
-            <DialogTitle>Completar compra #{completingPurchase?.id}</DialogTitle>
+            <DialogTitle>
+              Completar compra #{completingPurchase?.id}
+            </DialogTitle>
           </DialogHeader>
 
           <div className="space-y-4">
             <div className="grid gap-3 md:grid-cols-4 text-sm">
-              <div><strong>Proveedor:</strong> {completingPurchase?.providers?.name || "-"}</div>
-              <div><strong>Fecha:</strong> {completingPurchase?.purchase_date || "-"}</div>
-              <div><strong>Estado:</strong> {completingPurchase?.status === "completed" ? "Completada" : completingPurchase?.status === "cancelled" ? "Anulada" : "Incompleta"}</div>
+              <div>
+                <strong>Proveedor:</strong>{" "}
+                {completingPurchase?.providers?.name || "-"}
+              </div>
+              <div>
+                <strong>Fecha:</strong>{" "}
+                {completingPurchase?.purchase_date || "-"}
+              </div>
+              <div>
+                <strong>Estado:</strong>{" "}
+                {completingPurchase?.status === "completed"
+                  ? "Completada"
+                  : completingPurchase?.status === "cancelled"
+                    ? "Anulada"
+                    : "Incompleta"}
+              </div>
               <div>
                 <strong>Total:</strong>{" "}
-                {formatByCurrency(completingPurchase?.currency, completingPurchase?.total_amount)}
+                {formatByCurrency(
+                  completingPurchase?.currency,
+                  completingPurchase?.total_amount,
+                )}
               </div>
             </div>
 
@@ -1516,7 +1660,9 @@ const PurchasesConfig = () => {
 
             {!completeLoading && completingPurchase?.status === "completed" && (
               <div className="rounded-md border border-emerald-200 bg-emerald-50 p-4 text-center">
-                <div className="text-sm font-medium text-emerald-700">Esta compra esta completa</div>
+                <div className="text-sm font-medium text-emerald-700">
+                  Esta compra esta completa
+                </div>
                 <div className="text-xs text-emerald-600 mt-1">
                   Todos los pagos y IMEIs fueron registrados.
                 </div>
@@ -1531,9 +1677,12 @@ const PurchasesConfig = () => {
                       <div>
                         <h4 className="text-sm font-medium">Pagos</h4>
                         <p className="text-xs text-muted-foreground">
-                          Pagado: {formatARS(completeTotalPaid)} / {formatARS(completingPurchase?.total_amount_ars)}
+                          Pagado: {formatARS(completeTotalPaid)} /{" "}
+                          {formatARS(completingPurchase?.total_amount_ars)}
                           {" — Restante: "}
-                          <span className="font-medium text-amber-600">{formatARS(completeRemainingArs)}</span>
+                          <span className="font-medium text-amber-600">
+                            {formatARS(completeRemainingArs)}
+                          </span>
                         </p>
                       </div>
                       <Button
@@ -1552,15 +1701,18 @@ const PurchasesConfig = () => {
                       </Button>
                     </div>
                     {completePayments.map((payment, index) => (
-                      <div key={index} className="space-y-2 rounded-md border bg-muted/40 p-3">
+                      <div
+                        key={index}
+                        className="space-y-2 rounded-md border bg-muted/40 p-3"
+                      >
                         <div className="flex items-center gap-2">
                           <Select
                             value={payment.account_id}
                             onValueChange={(value) =>
                               setCompletePayments((prev) =>
                                 prev.map((p, i) =>
-                                  i === index ? { ...p, account_id: value } : p
-                                )
+                                  i === index ? { ...p, account_id: value } : p,
+                                ),
                               )
                             }
                           >
@@ -1587,7 +1739,8 @@ const PurchasesConfig = () => {
                               size="icon"
                               onClick={() =>
                                 setCompletePayments((prev) => {
-                                  if (prev.length === 1) return [{ account_id: "", amount: "" }];
+                                  if (prev.length === 1)
+                                    return [{ account_id: "", amount: "" }];
                                   return prev.filter((_, i) => i !== index);
                                 })
                               }
@@ -1607,8 +1760,10 @@ const PurchasesConfig = () => {
                             onChange={(e) =>
                               setCompletePayments((prev) =>
                                 prev.map((p, i) =>
-                                  i === index ? { ...p, amount: e.target.value } : p
-                                )
+                                  i === index
+                                    ? { ...p, amount: e.target.value }
+                                    : p,
+                                ),
                               )
                             }
                           />
@@ -1620,18 +1775,22 @@ const PurchasesConfig = () => {
                               disabled={!payment.account_id}
                               onClick={() => {
                                 const account = displayAccounts.find(
-                                  (a) => String(a.id) === String(payment.account_id)
+                                  (a) =>
+                                    String(a.id) === String(payment.account_id),
                                 );
-                                const accountCurrency = account?.currency || "ARS";
+                                const accountCurrency =
+                                  account?.currency || "ARS";
                                 const rate = getEffectiveRateForCurrency(
                                   accountCurrency,
                                   completingPurchase?.rate_mode || "system",
                                   completingPurchase?.manual_fx_rate,
                                   fxRate,
-                                  usdtRate
+                                  usdtRate,
                                 );
                                 if (accountCurrency !== "ARS" && !rate) {
-                                  toast.error(`No hay cotizacion para ${accountCurrency}`);
+                                  toast.error(
+                                    `No hay cotizacion para ${accountCurrency}`,
+                                  );
                                   return;
                                 }
                                 const amount =
@@ -1641,9 +1800,14 @@ const PurchasesConfig = () => {
                                 setCompletePayments((prev) =>
                                   prev.map((p, i) =>
                                     i === index
-                                      ? { ...p, amount: String(Number(amount || 0).toFixed(2)) }
-                                      : p
-                                  )
+                                      ? {
+                                          ...p,
+                                          amount: String(
+                                            Number(amount || 0).toFixed(2),
+                                          ),
+                                        }
+                                      : p,
+                                  ),
                                 );
                               }}
                             >
@@ -1657,11 +1821,13 @@ const PurchasesConfig = () => {
                             convertAmountToARS(
                               payment.amount,
                               displayAccounts.find(
-                                (a) => String(a.id) === String(payment.account_id || "")
+                                (a) =>
+                                  String(a.id) ===
+                                  String(payment.account_id || ""),
                               )?.currency || "ARS",
                               fxRate,
-                              usdtRate
-                            )
+                              usdtRate,
+                            ),
                           )}
                         </div>
                       </div>
@@ -1680,7 +1846,8 @@ const PurchasesConfig = () => {
                     <div>
                       <h4 className="text-sm font-medium">IMEIs pendientes</h4>
                       <p className="text-xs text-muted-foreground">
-                        {completePendingSerials.length} producto/s con IMEIs por ingresar
+                        {completePendingSerials.length} producto/s con IMEIs por
+                        ingresar
                       </p>
                     </div>
                     {completePendingSerials.map((item) => (
@@ -1700,7 +1867,8 @@ const PurchasesConfig = () => {
                             {item.product_variants?.color}
                           </div>
                           <div className="text-xs text-muted-foreground">
-                            {item.enteredSerials?.length || 0} / {item.quantity} IMEIs
+                            {item.enteredSerials?.length || 0} / {item.quantity}{" "}
+                            IMEIs
                           </div>
                         </div>
                       </div>
@@ -1711,7 +1879,10 @@ const PurchasesConfig = () => {
                         <div className="text-xs text-muted-foreground">
                           Agregar IMEIs para{" "}
                           <strong>
-                            {completeActiveItem.product_variants?.products?.name}{" "}
+                            {
+                              completeActiveItem.product_variants?.products
+                                ?.name
+                            }{" "}
                             {completeActiveItem.product_variants?.variant_name}
                           </strong>
                           {" — Pendientes: "}
@@ -1720,11 +1891,14 @@ const PurchasesConfig = () => {
                         <Textarea
                           placeholder={`Pega los ${completeActiveItem.pendingCount} IMEIs pendientes, uno por linea`}
                           value={completeSerialText}
-                          onChange={(e) => setCompleteSerialText(e.target.value)}
+                          onChange={(e) =>
+                            setCompleteSerialText(e.target.value)
+                          }
                           rows={4}
                         />
                         <div className="text-xs text-muted-foreground">
-                          Cargados: {parseIdentifiers(completeSerialText).length} /{" "}
+                          Cargados:{" "}
+                          {parseIdentifiers(completeSerialText).length} /{" "}
                           {completeActiveItem.pendingCount}
                         </div>
                         <Button
@@ -1735,23 +1909,26 @@ const PurchasesConfig = () => {
                           }
                           size="sm"
                         >
-                          {completeAddingSerials ? "Agregando..." : "Guardar IMEIs"}
+                          {completeAddingSerials
+                            ? "Agregando..."
+                            : "Guardar IMEIs"}
                         </Button>
                       </div>
                     )}
                   </div>
                 )}
 
-                {completeRemainingArs <= 0.01 && completePendingSerials.length === 0 && (
-                  <div className="rounded-md border border-emerald-200 bg-emerald-50 p-4 text-center">
-                    <div className="text-sm font-medium text-emerald-700">
-                      Todo completado
+                {completeRemainingArs <= 0.01 &&
+                  completePendingSerials.length === 0 && (
+                    <div className="rounded-md border border-emerald-200 bg-emerald-50 p-4 text-center">
+                      <div className="text-sm font-medium text-emerald-700">
+                        Todo completado
+                      </div>
+                      <div className="text-xs text-emerald-600 mt-1">
+                        Todos los pagos e IMEIs fueron registrados.
+                      </div>
                     </div>
-                    <div className="text-xs text-emerald-600 mt-1">
-                      Todos los pagos e IMEIs fueron registrados.
-                    </div>
-                  </div>
-                )}
+                  )}
               </>
             )}
           </div>
@@ -1779,8 +1956,8 @@ const PurchasesConfig = () => {
               Anular compra #{cancelingPurchase?.id}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              La compra quedara registrada para auditoria, se revertira el stock y se reintegraran
-              los movimientos asociados.
+              La compra quedara registrada para auditoria, se revertira el stock
+              y se reintegraran los movimientos asociados.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="grid gap-2">
@@ -1793,7 +1970,9 @@ const PurchasesConfig = () => {
             />
           </div>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={cancelingProcess}>Cancelar</AlertDialogCancel>
+            <AlertDialogCancel disabled={cancelingProcess}>
+              Cancelar
+            </AlertDialogCancel>
             <AlertDialogAction
               onClick={(event) => {
                 event.preventDefault();
@@ -1811,5 +1990,3 @@ const PurchasesConfig = () => {
 };
 
 export default PurchasesConfig;
-
-

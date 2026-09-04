@@ -734,7 +734,7 @@ const ProductsTable = ({ refreshToken = 0, isSellerView = false }) => {
                 <IconRefresh
                   className={refreshing ? "h-4 w-4 animate-spin" : "h-4 w-4"}
                 />
-                <span className="sm:inline">Refrescar</span>
+                <span className="sm:inline">Actualizar</span>
               </Button>
 
               {!isSellerView && (
