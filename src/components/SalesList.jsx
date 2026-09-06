@@ -19,6 +19,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContextProvider";
 import { supabase } from "@/lib/supabaseClient";
@@ -49,6 +57,7 @@ import {
 
 import {
   IconCalendar,
+  IconDotsVertical,
   IconRefresh,
   IconDownload,
   IconShieldCheck,
@@ -1304,10 +1313,7 @@ export function SalesList() {
           {/* <div className="flex-1"> */}
           <Popover>
             <PopoverTrigger asChild>
-              <Button
-                variant="outline"
-                className="w-full md:w-auto"
-              >
+              <Button variant="outline" className="w-full md:w-auto">
                 <IconCalendar className="h-4 w-4" />
                 {dateRange?.from
                   ? `${dateRange.from.toLocaleDateString("es-AR")} → ${
@@ -1338,7 +1344,6 @@ export function SalesList() {
           >
             Semana actual
           </Button>
-
         </div>
 
         {/* ------- FILA 2 SOLO EN MOBILE, MISMA FILA EN LG+ ------- */}
@@ -1413,12 +1418,79 @@ export function SalesList() {
                   <h2 className="font-bold text-lg">
                     {s.sale_type === "canje" ? "Canje" : "Venta"} #{s.sale_id}
                   </h2>
-                  <span className="text-sm text-muted-foreground">
-                    {new Date(s.sale_date).toLocaleString("es-AR", {
-                      timeZone: AR_TIMEZONE,
-                      hour12: false,
-                    })}
-                  </span>
+                  <div className="mt-4 flex gap-3 justify-end ">
+                    <span className="text-sm text-muted-foreground">
+                      {new Date(s.sale_date).toLocaleString("es-AR", {
+                        timeZone: AR_TIMEZONE,
+                        hour12: false,
+                      })}
+                    </span>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="h-8 w-8"
+                          aria-label="Acciones de la venta"
+                        >
+                          <IconDotsVertical className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-52">
+                        <DropdownMenuLabel>Acciones</DropdownMenuLabel>
+                        <DropdownMenuSeparator />
+                        {isOwner && (
+                          <DropdownMenuItem
+                            onClick={() => openEditSale(s)}
+                            disabled={
+                              s.status === "anulado" || s.status === "pending"
+                            }
+                          >
+                            Editar venta
+                          </DropdownMenuItem>
+                        )}
+                        {canManageSaleActions && (
+                          <DropdownMenuItem
+                            onClick={() => openWarrantyDialog(s)}
+                            disabled={
+                              s.status === "anulado" || s.status === "pending"
+                            }
+                          >
+                            <IconShieldCheck className="h-4 w-4" />
+                            Garantia
+                          </DropdownMenuItem>
+                        )}
+                        {canManageSaleActions && s.status === "pending" && (
+                          <DropdownMenuItem
+                            onClick={() => startConfirmCancelSale(s)}
+                          >
+                            Cancelar venta
+                          </DropdownMenuItem>
+                        )}
+                        {canManageSaleActions && (
+                          <DropdownMenuItem
+                            onClick={() => startCancelSale(s)}
+                            disabled={
+                              s.status === "anulado" || s.status === "pending"
+                            }
+                            className="text-destructive focus:text-destructive"
+                          >
+                            Anular venta
+                          </DropdownMenuItem>
+                        )}
+                        {(isOwner || canManageSaleActions) && (
+                          <DropdownMenuSeparator />
+                        )}
+                        <DropdownMenuItem
+                          onClick={() => handleDownloadSalePDF(s)}
+                          disabled={s.status === "pending"}
+                        >
+                          <IconDownload className="h-4 w-4" />
+                          Descargar PDF
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
                 </div>
                 <div className="flex items-center gap-3 mt-2 flex-wrap">
                   {s.sale_type === "canje" && (
@@ -1820,69 +1892,6 @@ export function SalesList() {
                     Total a pagar: $
                     {Number(s.total_ars).toLocaleString("es-AR")}
                   </div>
-                </div>
-
-                {/* Botón descargar PDF */}
-                <div className="mt-4 flex flex-wrap justify-end gap-2">
-                  {(isOwner || canManageSaleActions) && (
-                    <>
-                      {isOwner && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => openEditSale(s)}
-                          disabled={
-                            s.status === "anulado" || s.status === "pending"
-                          }
-                        >
-                          Editar venta
-                        </Button>
-                      )}
-                      {canManageSaleActions && (
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => openWarrantyDialog(s)}
-                          disabled={
-                            s.status === "anulado" || s.status === "pending"
-                          }
-                        >
-                          <IconShieldCheck className="mr-2 h-4 w-4" />
-                          Garantia
-                        </Button>
-                      )}
-                      {canManageSaleActions && s.status === "pending" && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => startConfirmCancelSale(s)}
-                        >
-                          Cancelar venta
-                        </Button>
-                      )}
-                      {canManageSaleActions && (
-                        <Button
-                          variant="destructive"
-                          size="sm"
-                          onClick={() => startCancelSale(s)}
-                          disabled={
-                            s.status === "anulado" || s.status === "pending"
-                          }
-                        >
-                          Anular venta
-                        </Button>
-                      )}
-                    </>
-                  )}
-                  <Button
-                    onClick={() => handleDownloadSalePDF(s)}
-                    size="sm"
-                    className="gap-2"
-                    disabled={s.status === "pending"}
-                  >
-                    <IconDownload className="h-4 w-4" />
-                    Descargar PDF
-                  </Button>
                 </div>
               </Card>
             );
