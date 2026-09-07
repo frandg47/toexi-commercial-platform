@@ -183,6 +183,11 @@ const PurchasesConfig = () => {
   const [completeAddingPayment, setCompleteAddingPayment] = useState(false);
   const [completeAddingSerials, setCompleteAddingSerials] = useState(false);
 
+  const [reentryDialogOpen, setReentryDialogOpen] = useState(false);
+  const [reentrySoldUnits, setReentrySoldUnits] = useState([]);
+  const [pendingSavePayload, setPendingSavePayload] = useState(null);
+  const [reentryChecking, setReentryChecking] = useState(false);
+
   const [form, setForm] = useState({
     provider_id: "",
     purchase_date: new Date().toISOString().slice(0, 10),
@@ -493,6 +498,47 @@ const PurchasesConfig = () => {
       }
     }
 
+    setReentryChecking(true);
+    try {
+      const allIdentifiers = [];
+      for (const item of items) {
+        if (!isSerialTrackedVariant(item.variant)) continue;
+        const identifiers = parseIdentifiers(item.identifiersText);
+        for (const identifier of identifiers) {
+          allIdentifiers.push({
+            identifier,
+            normalized: normalizeIdentifier(identifier),
+            variant: item.variant,
+          });
+        }
+      }
+
+      if (allIdentifiers.length > 0) {
+        const normalizedList = allIdentifiers.map((i) => i.normalized);
+        const { data: existingUnits } = await supabase
+          .from("inventory_units")
+          .select(
+            "id, identifier_value, identifier_normalized, status, sale_id, sale:sales(id, sale_date, customers(name, last_name))",
+          )
+          .in("identifier_normalized", normalizedList);
+
+        const soldUnits = (existingUnits || []).filter(
+          (u) => u.status === "sold",
+        );
+        if (soldUnits.length > 0) {
+          setReentrySoldUnits(soldUnits);
+          setPendingSavePayload({ currency, rate });
+          setReentryDialogOpen(true);
+          setReentryChecking(false);
+          return;
+        }
+      }
+    } catch (err) {
+      console.error("Error checking sold identifiers:", err);
+    } finally {
+      setReentryChecking(false);
+    }
+
     const paymentRows = payments
       .filter(
         (payment) => payment.account_id && Number(payment.amount || 0) > 0,
@@ -555,6 +601,87 @@ const PurchasesConfig = () => {
     }
 
     toast.success("Compra registrada");
+    setForm((f) => ({
+      ...f,
+      notes: "",
+      rate_mode: "system",
+      manual_fx_rate: "",
+    }));
+    setItems([]);
+    setPayments([{ account_id: "", amount: "" }]);
+
+    await loadPurchases();
+  };
+
+  const proceedWithSave = async () => {
+    setReentryDialogOpen(false);
+    setReentrySoldUnits([]);
+
+    const { currency, rate } = pendingSavePayload || {};
+    setPendingSavePayload(null);
+
+    const paymentRows = payments
+      .filter(
+        (payment) => payment.account_id && Number(payment.amount || 0) > 0,
+      )
+      .map((payment) => {
+        const account = displayAccounts.find(
+          (item) => String(item.id) === String(payment.account_id || ""),
+        );
+        const paymentAmount = Number(payment.amount || 0);
+        const paymentCurrency = account?.currency || currency;
+        const paymentRate = getEffectiveRateForCurrency(
+          paymentCurrency,
+          form.rate_mode,
+          form.manual_fx_rate,
+          fxRate,
+          usdtRate,
+        );
+        return {
+          account_id: Number(payment.account_id),
+          payment_method_id: null,
+          amount: paymentAmount,
+          currency: paymentCurrency,
+          amount_ars:
+            paymentCurrency === "ARS"
+              ? paymentAmount
+              : paymentAmount * paymentRate,
+          fx_rate_used: paymentCurrency === "ARS" ? null : paymentRate,
+        };
+      });
+
+    const payloadItems = items.map((item) => ({
+      variant_id: item.variant_id,
+      quantity: Number(item.quantity || 0),
+      unit_cost: Number(item.unit_cost || 0),
+      identifiers: isSerialTrackedVariant(item.variant)
+        ? parseIdentifiers(item.identifiersText)
+        : [],
+    }));
+
+    const { error } = await supabase.rpc(
+      "create_purchase_with_inventory_units",
+      {
+        p_provider_id: Number(form.provider_id),
+        p_purchase_date: form.purchase_date,
+        p_currency: currency,
+        p_total_amount: totalAmount,
+        p_total_amount_ars: totalAmountArs,
+        p_fx_rate_used: currency === "ARS" ? null : rate,
+        p_notes: form.notes || null,
+        p_items: payloadItems,
+        p_payments: paymentRows,
+      },
+    );
+
+    if (error) {
+      toast.error("No se pudo registrar la compra", {
+        description: error.message,
+      });
+      return;
+    }
+
+    toast.success("Compra registrada (incluye reingreso de equipo/s vendido/s)");
     setForm((f) => ({
       ...f,
       notes: "",
@@ -1497,7 +1624,9 @@ const PurchasesConfig = () => {
             ))}
           </div>
 
-          <Button onClick={handleSave}>Guardar compra</Button>
+          <Button onClick={handleSave} disabled={reentryChecking}>
+            {reentryChecking ? "Verificando IMEIs..." : "Guardar compra"}
+          </Button>
         </CardContent>
       </Card>
 
@@ -1981,6 +2110,59 @@ const PurchasesConfig = () => {
               disabled={cancelingProcess}
             >
               {cancelingProcess ? "Anulando..." : "Confirmar anulacion"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={reentryDialogOpen} onOpenChange={setReentryDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Equipo vendido detectado</AlertDialogTitle>
+            <AlertDialogDescription>
+              Se detecto que uno o mas IMEIs pertenecen a equipos vendidos
+              anteriormente por la empresa. El sistema podra reingresar el equipo
+              al inventario preservando el historial completo.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-2 max-h-[300px] overflow-y-auto">
+            {reentrySoldUnits.map((unit) => (
+              <div
+                key={unit.id}
+                className="rounded-md border bg-amber-50 p-3 text-sm"
+              >
+                <div className="font-medium">
+                  IMEI: {unit.identifier_value}
+                </div>
+                <div className="text-xs text-muted-foreground mt-1">
+                  {unit.sale && (
+                    <>
+                      Venta: #{unit.sale.id} -{" "}
+                      {unit.sale.sale_date
+                        ? new Date(unit.sale.sale_date).toLocaleDateString(
+                            "es-AR",
+                          )
+                        : "s/fecha"}
+                      {unit.sale.customers &&
+                        ` - ${
+                          [
+                            unit.sale.customers.name,
+                            unit.sale.customers.last_name,
+                          ]
+                            .filter(Boolean)
+                            .join(" ") || "Sin nombre"
+                        }`}
+                    </>
+                  )}
+                  {!unit.sale && "Venta sin datos asociados"}
+                </div>
+              </div>
+            ))}
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={proceedWithSave}>
+              Si, reingresar
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

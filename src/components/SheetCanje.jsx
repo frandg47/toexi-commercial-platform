@@ -20,6 +20,16 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabaseClient";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import DialogAddCustomer from "./DialogAddCustomer";
 import { formatPersonName } from "@/utils/formatName";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -96,6 +106,9 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
   const [rateMode, setRateMode] = useState("system");
   const [receivedImei, setReceivedImei] = useState("");
   const [receivedList, setReceivedList] = useState([]);
+  const [reentryConfirmOpen, setReentryConfirmOpen] = useState(false);
+  const [reentryPendingItem, setReentryPendingItem] = useState(null);
+  const [reentrySoldInfo, setReentrySoldInfo] = useState(null);
 
   // Step 3: Products to buy
   const [searchProduct, setSearchProduct] = useState("");
@@ -295,7 +308,7 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
   }, [cartTotalArs, totalReceivedArs]);
 
   // Add current form entry to receivedList
-  const handleAddReceived = () => {
+  const handleAddReceived = async () => {
     if (!selectedReceivedVariant) return toast.error("Seleccioná el producto recibido");
     if (!receivedAmount || Number(receivedAmount) <= 0) return toast.error("Ingresá el monto cotizado");
 
@@ -309,6 +322,30 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
     );
     if (duplicateImei) {
       return toast.error("Ese IMEI ya fue agregado");
+    }
+
+    if (isSerial && receivedImei) {
+      const normalized = normalizeIdentifier(receivedImei);
+      const { data: existingUnits } = await supabase
+        .from("inventory_units")
+        .select("id, identifier_value, status, sale_id, sale:sales(id, sale_date, customers(name, last_name))")
+        .eq("identifier_normalized", normalized)
+        .limit(1);
+
+      const existingUnit = existingUnits?.[0];
+      if (existingUnit && existingUnit.status === "sold") {
+        setReentrySoldInfo(existingUnit);
+        setReentryPendingItem({
+          variant: selectedReceivedVariant,
+          amount: Number(receivedAmount),
+          currency: receivedCurrency,
+          imei: receivedImei.trim(),
+          amountArs: currentEntryArs,
+          fxRateUsed: effectiveRate || 0,
+        });
+        setReentryConfirmOpen(true);
+        return;
+      }
     }
 
     const rateUsed = effectiveRate || 0;
@@ -332,6 +369,19 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
     setReceivedAmount("");
     setReceivedImei("");
     toast.success("Producto agregado al canje");
+  };
+
+  const confirmReentry = () => {
+    if (!reentryPendingItem) return;
+    setReceivedList((prev) => [...prev, { id: Date.now(), ...reentryPendingItem }]);
+    setSelectedReceivedVariant(null);
+    setSearchReceivedVariant("");
+    setReceivedAmount("");
+    setReceivedImei("");
+    setReentryConfirmOpen(false);
+    setReentryPendingItem(null);
+    setReentrySoldInfo(null);
+    toast.success("Equipo reingresado al canje");
   };
 
   const removeFromReceivedList = (itemId) => {
@@ -1164,6 +1214,45 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
           setDialogCustomerOpen(false);
         }}
       />
+
+      <AlertDialog open={reentryConfirmOpen} onOpenChange={setReentryConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Equipo vendido detectado</AlertDialogTitle>
+            <AlertDialogDescription>
+              El IMEI <strong>{reentrySoldInfo?.identifier_value}</strong> pertenece a un equipo
+              vendido anteriormente. El sistema lo reingresara al inventario
+              preservando el historial completo.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {reentrySoldInfo?.sale && (
+            <div className="rounded-md border bg-amber-50 p-3 text-sm">
+              <div className="font-medium">Venta anterior</div>
+              <div className="text-xs text-muted-foreground mt-1">
+                Venta: #{reentrySoldInfo.sale.id} -{" "}
+                {reentrySoldInfo.sale.sale_date
+                  ? new Date(reentrySoldInfo.sale.sale_date).toLocaleDateString("es-AR")
+                  : "s/fecha"}
+                {reentrySoldInfo.sale.customers &&
+                  ` - ${
+                    [
+                      reentrySoldInfo.sale.customers.name,
+                      reentrySoldInfo.sale.customers.last_name,
+                    ]
+                      .filter(Boolean)
+                      .join(" ") || "Sin nombre"
+                  }`}
+              </div>
+            </div>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmReentry}>
+              Si, reingresar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Sheet>
   );
 }

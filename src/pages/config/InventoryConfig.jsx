@@ -59,6 +59,7 @@ const STATUS_LABELS = {
   returned_defective: "Devuelta defectuosa",
   warranty_hold: "Retenida por garantia",
   voided: "Anulada",
+  reentered: "Reingresado",
 };
 
 const STATUS_BADGE_CLASS = {
@@ -79,6 +80,8 @@ const STATUS_BADGE_CLASS = {
     "border-violet-200 bg-violet-100 text-violet-800 dark:border-violet-900 dark:bg-violet-950/50 dark:text-violet-200",
   voided:
     "border-zinc-200 bg-zinc-100 text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300",
+  reentered:
+    "border-blue-200 bg-blue-100 text-blue-800 dark:border-blue-900 dark:bg-blue-950/50 dark:text-blue-200",
 };
 
 const EVENT_LABELS = {
@@ -96,6 +99,8 @@ const EVENT_LABELS = {
   order_reserved: "Reserva de pedido",
   order_reservation_released: "Reserva liberada",
   order_reservation_expired: "Reserva vencida",
+  purchase_reentered: "Reingreso por compra",
+  canje_reentered: "Reingreso por plan canje",
 };
 
 const TRACKING_LABELS = {
@@ -350,7 +355,8 @@ export default function InventoryConfig() {
         }
 
         acc[variantId].total += 1;
-        if (unit.status === "available") acc[variantId].available += 1;
+        if (["available", "reentered", "returned_available"].includes(unit.status))
+          acc[variantId].available += 1;
         else if (unit.status === "reserved") acc[variantId].reserved += 1;
         else if (unit.status === "sold") acc[variantId].sold += 1;
         else if (["defective", "returned_defective"].includes(unit.status))
