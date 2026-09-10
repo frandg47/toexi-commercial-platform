@@ -36,6 +36,8 @@ import {
   IconDotsVertical,
   IconTableExport,
   IconPdf,
+  IconCheck,
+  IconChevronDown,
 } from "@tabler/icons-react";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
@@ -53,6 +55,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Checkbox } from "@/components/ui/checkbox";
 
 const formatCurrency = (value, currency) => {
   const safe = Number(value || 0);
@@ -125,6 +128,7 @@ export default function FinancePage() {
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [exportFormat, setExportFormat] = useState(null);
   const [exportTargetMonth, setExportTargetMonth] = useState("");
+  const [channelFilterOpen, setChannelFilterOpen] = useState(false);
 
   const loadStaticData = useCallback(async () => {
     setLoading(true);
@@ -359,6 +363,7 @@ export default function FinancePage() {
         sales_channel_id,
         sale_type,
         trade_in_data,
+        lead_id,
         sale_items(
           id,
           quantity,
@@ -468,6 +473,21 @@ export default function FinancePage() {
       }
     }
 
+    // Obtener datos de depósito (señas) de los leads asociados a las ventas
+    const uniqueLeadIds = [
+      ...new Set((salesData || []).map((s) => s.lead_id).filter(Boolean)),
+    ];
+    const leadDepositMap = {};
+    if (uniqueLeadIds.length > 0) {
+      const { data: leadsData } = await supabase
+        .from("leads")
+        .select("id, deposit_paid, deposit_amount, deposit_currency")
+        .in("id", uniqueLeadIds);
+      (leadsData || []).forEach((l) => {
+        leadDepositMap[l.id] = l;
+      });
+    }
+
     // Calcular ingresos netos por mes usando el ingreso real acreditado
     const monthlyData = {};
 
@@ -496,10 +516,23 @@ export default function FinancePage() {
         saleAccreditedIncome[sale.id] != null
           ? Number(saleAccreditedIncome[sale.id])
           : Number(sale.total_usd || 0);
-      const income =
-        saleAccreditedIncome[sale.id] != null
-          ? baseIncome + tradeInUsd
-          : baseIncome;
+      const depositUsd = (() => {
+        if (!sale.lead_id) return 0;
+        const lead = leadDepositMap[sale.lead_id];
+        if (!lead?.deposit_paid) return 0;
+        const amount = Number(lead.deposit_amount || 0);
+        const currency = lead.deposit_currency || "ARS";
+        const saleRate =
+          Number(sale.fx_rate_used || 0) || fxRate;
+        if (currency === "USD") return amount;
+        if (currency === "USDT")
+          return saleRate ? (amount * (usdtRate || 1)) / saleRate : amount;
+        if (currency === "ARS") return saleRate ? amount / saleRate : 0;
+        return 0;
+      })();
+      const income = saleAccreditedIncome[sale.id] != null
+        ? baseIncome + tradeInUsd + depositUsd
+        : baseIncome + depositUsd;
       monthlyData[monthKey].totalSales += income;
 
       sale.sale_items?.forEach((item) => {
@@ -540,7 +573,7 @@ export default function FinancePage() {
       let salesQuery = supabase
         .from("sales")
         .select(
-          `id,sale_date,total_usd,fx_rate_used,seller_id,sale_type,trade_in_data,sales_channels(name),sale_items(product_name,variant_name,quantity,usd_price,cost_price_usd,subtotal_usd,commission_pct,commission_fixed)`,
+          `id,sale_date,total_usd,fx_rate_used,seller_id,sale_type,trade_in_data,lead_id,sales_channels(name),sale_items(product_name,variant_name,quantity,usd_price,cost_price_usd,subtotal_usd,commission_pct,commission_fixed)`,
         )
         .eq("status", "vendido")
         .is("voided_at", null)
@@ -661,6 +694,21 @@ export default function FinancePage() {
         }
       }
 
+      // Obtener datos de depósito (señas) de los leads asociados a las ventas
+      const uniqueLeadIds = [
+        ...new Set((salesData || []).map((s) => s.lead_id).filter(Boolean)),
+      ];
+      const leadDepositMap = {};
+      if (uniqueLeadIds.length > 0) {
+        const { data: leadsData } = await supabase
+          .from("leads")
+          .select("id, deposit_paid, deposit_amount, deposit_currency")
+          .in("id", uniqueLeadIds);
+        (leadsData || []).forEach((l) => {
+          leadDepositMap[l.id] = l;
+        });
+      }
+
       const enrichedSales = (salesData || []).map((sale) => {
         const sellerRole = sellerRoleMap[sale.seller_id];
         let commissionUsd = null;
@@ -683,13 +731,27 @@ export default function FinancePage() {
           saleAccreditedIncome[sale.id] != null
             ? Number(saleAccreditedIncome[sale.id])
             : Number(sale.total_usd || 0);
+        const depositUsd = (() => {
+          if (!sale.lead_id) return 0;
+          const lead = leadDepositMap[sale.lead_id];
+          if (!lead?.deposit_paid) return 0;
+          const amount = Number(lead.deposit_amount || 0);
+          const currency = lead.deposit_currency || "ARS";
+          const saleRate =
+            Number(sale.fx_rate_used || 0) || fxRate;
+          if (currency === "USD") return amount;
+          if (currency === "USDT")
+            return saleRate ? (amount * (usdtRate || 1)) / saleRate : amount;
+          if (currency === "ARS") return saleRate ? amount / saleRate : 0;
+          return 0;
+        })();
         return {
           ...sale,
-          accredited_total_usd:
-            saleAccreditedIncome[sale.id] != null
-              ? baseAccredited + tradeInUsd
-              : baseAccredited,
+          accredited_total_usd: saleAccreditedIncome[sale.id] != null
+            ? baseAccredited + tradeInUsd + depositUsd
+            : baseAccredited + depositUsd,
           trade_in_usd: tradeInUsd,
+          deposit_usd: depositUsd,
           income_pending:
             !saleAccreditedIncome[sale.id] &&
             Boolean(saleHasPendingMovements[sale.id]),
@@ -728,7 +790,7 @@ export default function FinancePage() {
       let salesQuery = supabase
         .from("sales")
         .select(
-          `id,sale_date,total_usd,fx_rate_used,seller_id,sale_type,trade_in_data,sales_channels(name),sale_items(product_name,variant_name,quantity,usd_price,cost_price_usd,subtotal_usd,commission_pct,commission_fixed)`,
+          `id,sale_date,total_usd,fx_rate_used,seller_id,sale_type,trade_in_data,lead_id,sales_channels(name),sale_items(product_name,variant_name,quantity,usd_price,cost_price_usd,subtotal_usd,commission_pct,commission_fixed)`,
         )
         .eq("status", "vendido")
         .is("voided_at", null)
@@ -847,6 +909,21 @@ export default function FinancePage() {
         }
       }
 
+      // Obtener datos de depósito (señas) de los leads asociados a las ventas
+      const uniqueLeadIds = [
+        ...new Set((salesData || []).map((s) => s.lead_id).filter(Boolean)),
+      ];
+      const leadDepositMap = {};
+      if (uniqueLeadIds.length > 0) {
+        const { data: leadsData } = await supabase
+          .from("leads")
+          .select("id, deposit_paid, deposit_amount, deposit_currency")
+          .in("id", uniqueLeadIds);
+        (leadsData || []).forEach((l) => {
+          leadDepositMap[l.id] = l;
+        });
+      }
+
       const enrichedSales = (salesData || []).map((sale) => {
         const sellerRole = sellerRoleMap[sale.seller_id];
         let commissionUsd = null;
@@ -869,13 +946,27 @@ export default function FinancePage() {
           saleAccreditedIncome[sale.id] != null
             ? Number(saleAccreditedIncome[sale.id])
             : Number(sale.total_usd || 0);
+        const depositUsd = (() => {
+          if (!sale.lead_id) return 0;
+          const lead = leadDepositMap[sale.lead_id];
+          if (!lead?.deposit_paid) return 0;
+          const amount = Number(lead.deposit_amount || 0);
+          const currency = lead.deposit_currency || "ARS";
+          const saleRate =
+            Number(sale.fx_rate_used || 0) || fxRate;
+          if (currency === "USD") return amount;
+          if (currency === "USDT")
+            return saleRate ? (amount * (usdtRate || 1)) / saleRate : amount;
+          if (currency === "ARS") return saleRate ? amount / saleRate : 0;
+          return 0;
+        })();
         return {
           ...sale,
-          accredited_total_usd:
-            saleAccreditedIncome[sale.id] != null
-              ? baseAccredited + tradeInUsd
-              : baseAccredited,
+          accredited_total_usd: saleAccreditedIncome[sale.id] != null
+            ? baseAccredited + tradeInUsd + depositUsd
+            : baseAccredited + depositUsd,
           trade_in_usd: tradeInUsd,
+          deposit_usd: depositUsd,
           income_pending:
             !saleAccreditedIncome[sale.id] &&
             Boolean(saleHasPendingMovements[sale.id]),
@@ -1051,10 +1142,10 @@ export default function FinancePage() {
 
   const selectedSalesChannelLabels = useMemo(() => {
     return selectedSalesChannels.map((channelId) => {
-      if (channelId === "none") return "Sin canal";
+      if (channelId === "none") return "SIN CANAL";
       return (
         salesChannels.find((channel) => String(channel.id) === channelId)
-          ?.name || `Canal ${channelId}`
+          ?.name?.toUpperCase() || `CANAL ${channelId}`
       );
     });
   }, [selectedSalesChannels, salesChannels]);
@@ -1386,46 +1477,85 @@ export default function FinancePage() {
               <span className="text-xs text-muted-foreground">
                 Canal de venta
               </span>
-              <div className="flex max-w-[360px] flex-wrap gap-2">
-                <Button
-                  type="button"
-                  variant={
-                    selectedSalesChannels.length === 0 ? "default" : "outline"
-                  }
-                  size="sm"
-                  onClick={() => setSelectedSalesChannels([])}
-                >
-                  Todos
-                </Button>
-                <Button
-                  type="button"
-                  variant={
-                    selectedSalesChannels.includes("none")
-                      ? "default"
-                      : "outline"
-                  }
-                  size="sm"
-                  onClick={() => toggleSalesChannelFilter("none")}
-                >
-                  Sin canal
-                </Button>
-                {salesChannels.map((channel) => {
-                  const channelId = String(channel.id);
-                  const isSelected = selectedSalesChannels.includes(channelId);
-
-                  return (
-                    <Button
-                      key={channel.id}
-                      type="button"
-                      variant={isSelected ? "default" : "outline"}
-                      size="sm"
-                      onClick={() => toggleSalesChannelFilter(channelId)}
+              <Popover open={channelFilterOpen} onOpenChange={setChannelFilterOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    role="combobox"
+                    className="w-full justify-between text-left font-normal"
+                  >
+                    {selectedSalesChannels.length === 0
+                      ? "Todos los canales"
+                      : selectedSalesChannels.length === 1
+                        ? selectedSalesChannelLabels[0]
+                        : `${selectedSalesChannels.length} canales seleccionados`}
+                    <IconChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-[280px] p-0" align="start">
+                  <div className="p-2">
+                    <div
+                      className="flex items-center gap-2 rounded-sm px-2 py-1.5 text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground"
+                      onClick={() => setSelectedSalesChannels([])}
                     >
-                      {channel.name}
-                    </Button>
-                  );
-                })}
-              </div>
+                      <div
+                        className={`flex h-4 w-4 items-center justify-center rounded-sm border ${
+                          selectedSalesChannels.length === 0
+                            ? "border-primary bg-primary text-primary-foreground"
+                            : "border-muted-foreground/40"
+                        }`}
+                      >
+                        {selectedSalesChannels.length === 0 && (
+                          <IconCheck className="h-3 w-3" />
+                        )}
+                      </div>
+                      Todos
+                    </div>
+                    <div
+                      className="flex items-center gap-2 rounded-sm px-2 py-1.5 text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground"
+                      onClick={() => toggleSalesChannelFilter("none")}
+                    >
+                      <div
+                        className={`flex h-4 w-4 items-center justify-center rounded-sm border ${
+                          selectedSalesChannels.includes("none")
+                            ? "border-primary bg-primary text-primary-foreground"
+                            : "border-muted-foreground/40"
+                        }`}
+                      >
+                        {selectedSalesChannels.includes("none") && (
+                          <IconCheck className="h-3 w-3" />
+                        )}
+                      </div>
+                      SIN CANAL
+                    </div>
+                    <div className="my-1 h-px bg-border" />
+                    {salesChannels.map((channel) => {
+                      const channelId = String(channel.id);
+                      const isSelected = selectedSalesChannels.includes(channelId);
+                      return (
+                        <div
+                          key={channel.id}
+                          className="flex items-center gap-2 rounded-sm px-2 py-1.5 text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground"
+                          onClick={() => toggleSalesChannelFilter(channelId)}
+                        >
+                          <div
+                            className={`flex h-4 w-4 items-center justify-center rounded-sm border ${
+                              isSelected
+                                ? "border-primary bg-primary text-primary-foreground"
+                                : "border-muted-foreground/40"
+                            }`}
+                          >
+                            {isSelected && (
+                              <IconCheck className="h-3 w-3" />
+                            )}
+                          </div>
+                          {channel.name?.toUpperCase() || `CANAL ${channelId}`}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </PopoverContent>
+              </Popover>
             </div>
             <Button
               variant="outline"

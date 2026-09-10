@@ -16,13 +16,17 @@ export const getReceivedItems = (tradeInData) => {
 export const getTotalReceivedArs = (tradeInData) => {
   if (!tradeInData) return 0;
   if (tradeInData.total_amount_ars != null) return Number(tradeInData.total_amount_ars);
-  return Number(tradeInData.amount_ars || 0);
+  if (tradeInData.amount_ars != null) return Number(tradeInData.amount_ars);
+  const items = getReceivedItems(tradeInData);
+  return items.reduce((sum, item) => sum + Number(item.amount_ars || 0), 0);
 };
 
 export const getTotalReceivedUsd = (tradeInData) => {
   if (!tradeInData) return 0;
   if (tradeInData.total_amount_usd != null) return Number(tradeInData.total_amount_usd);
-  return Number(tradeInData.amount_usd || 0);
+  if (tradeInData.amount_usd != null) return Number(tradeInData.amount_usd);
+  const items = getReceivedItems(tradeInData);
+  return items.reduce((sum, item) => sum + Number(item.amount_usd || 0), 0);
 };
 
 export const getReceivedFxRate = (tradeInData) => {
