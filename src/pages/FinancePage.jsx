@@ -1453,7 +1453,7 @@ export default function FinancePage() {
           </div>
           <div className="flex flex-col gap-4 md:flex-row md:items-end md:gap-3">
             <div className="grid gap-1">
-              <span className="text-xs text-muted-foreground">Año</span>
+              {/* <span className="text-xs text-muted-foreground">Año</span> */}
               <Select
                 value={String(selectedYear)}
                 onValueChange={(value) => setSelectedYear(Number(value))}
@@ -1471,9 +1471,9 @@ export default function FinancePage() {
               </Select>
             </div>
             <div className="grid gap-1 ">
-              <span className="text-xs text-muted-foreground">
+              {/* <span className="text-xs text-muted-foreground">
                 Canal de venta
-              </span>
+              </span> */}
               <Popover
                 open={channelFilterOpen}
                 onOpenChange={setChannelFilterOpen}
@@ -1557,7 +1557,7 @@ export default function FinancePage() {
               </Popover>
             </div>
             <div className="grid gap-1">
-              <span className=" text-xs text-muted-foreground ">Opciones</span>
+              {/* <span className=" text-xs text-muted-foreground ">Opciones</span> */}
               <div className="flex gap-3">
                 <Button
                   variant="outline"
@@ -1668,23 +1668,20 @@ export default function FinancePage() {
         </div>
       </div>
 
-      <Card>
-        <CardHeader className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <CardTitle>Balance por cuenta</CardTitle>
-          <Button
-            onClick={loadStaticData}
-            disabled={loading}
-            variant={"outline"}
-          >
-            <IconRefresh className="h-4 w-4" />
-            {loading ? "Actualizando..." : "Actualizar"}
-          </Button>
-        </CardHeader>
-        <CardContent className="space-y-4">
+      <div>
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div className="flex flex-col gap-2">
+            <CardTitle>Balance por cuenta - Movimientos</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Movimientos registrados por cuenta, filtrados por fecha y tipo de movimiento
+            </p>
+          </div>
+        </div>
+        <div className="mt-4 space-y-4">
           <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
             <div className="flex flex-wrap items-end gap-3">
-              <div className="grid gap-1">
-                <span className="text-xs text-muted-foreground">Fecha</span>
+              <div className="grid gap-1 w-auto">
+                {/* <span className="text-xs text-muted-foreground">Fecha</span> */}
                 <Popover>
                   <PopoverTrigger asChild>
                     <Button
@@ -1709,16 +1706,16 @@ export default function FinancePage() {
                 </Popover>
               </div>
               <div className="grid gap-1">
-                <span className="text-xs text-muted-foreground">Semana</span>
+                {/* <span className="text-xs text-muted-foreground">Semana</span> */}
                 <Button variant="outline" onClick={handleWeekFilter}>
                   Semana actual
                 </Button>
               </div>
             </div>
 
-            <div className="grid gap-3 md:grid-cols-2 md:justify-end">
+            <div className="grid gap-3 md:grid-cols-3 md:justify-end">
               <div className="grid gap-1">
-                <span className="text-xs text-muted-foreground">Cuenta</span>
+                {/* <span className="text-xs text-muted-foreground">Cuenta</span> */}
                 <Select
                   value={filters.accountId}
                   onValueChange={(value) =>
@@ -1739,7 +1736,7 @@ export default function FinancePage() {
                 </Select>
               </div>
               <div className="grid gap-1">
-                <span className="text-xs text-muted-foreground">Tipo</span>
+                {/* <span className="text-xs text-muted-foreground">Tipo</span> */}
                 <Select
                   value={filters.type}
                   onValueChange={(value) =>
@@ -1756,6 +1753,16 @@ export default function FinancePage() {
                     <SelectItem value="transfer">Transferencias</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+              <div className="grid gap-1">
+                <Button
+                  onClick={loadStaticData}
+                  disabled={loading}
+                  variant={"outline"}
+                >
+                  <IconRefresh className="h-4 w-4" />
+                  {loading ? "Actualizando..." : "Actualizar"}
+                </Button>
               </div>
             </div>
           </div>
@@ -1823,8 +1830,8 @@ export default function FinancePage() {
               </TableBody>
             </Table>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
 
       <Dialog open={detailDialogOpen} onOpenChange={setDetailDialogOpen}>
         {/* Modificado: Se remueve la restricción estricta de h y vh para dar flex completo */}
