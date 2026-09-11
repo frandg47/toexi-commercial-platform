@@ -411,6 +411,7 @@ export default function FinancePage() {
     // Obtener el ingreso real acreditado desde account_movements
     const saleIds = (salesData || []).map((s) => s.id);
     const saleAccreditedIncome = {};
+    const saleHasPendingMovements = {};
     const saleFxRateMap = new Map(
       (salesData || []).map((s) => [s.id, Number(s.fx_rate_used || 0)]),
     );
@@ -439,15 +440,16 @@ export default function FinancePage() {
         const today = todayDateKey();
 
         for (const m of incomeMovements || []) {
+          const saleId = paymentToSale.get(m.related_id);
+          if (!saleId) continue;
+
           if (
             m.accreditation_status === "pending" &&
             m.available_on &&
             m.available_on > today
-          )
-            continue;
-
-          const saleId = paymentToSale.get(m.related_id);
-          if (!saleId) continue;
+          ) {
+            saleHasPendingMovements[saleId] = true;
+          }
 
           const amount = Number(m.amount || 0);
           if (!amount) continue;
@@ -522,17 +524,17 @@ export default function FinancePage() {
         if (!lead?.deposit_paid) return 0;
         const amount = Number(lead.deposit_amount || 0);
         const currency = lead.deposit_currency || "ARS";
-        const saleRate =
-          Number(sale.fx_rate_used || 0) || fxRate;
+        const saleRate = Number(sale.fx_rate_used || 0) || fxRate;
         if (currency === "USD") return amount;
         if (currency === "USDT")
           return saleRate ? (amount * (usdtRate || 1)) / saleRate : amount;
         if (currency === "ARS") return saleRate ? amount / saleRate : 0;
         return 0;
       })();
-      const income = saleAccreditedIncome[sale.id] != null
-        ? baseIncome + tradeInUsd + depositUsd
-        : baseIncome + depositUsd;
+      const income =
+        saleAccreditedIncome[sale.id] != null
+          ? baseIncome + tradeInUsd + depositUsd
+          : baseIncome + depositUsd;
       monthlyData[monthKey].totalSales += income;
 
       sale.sale_items?.forEach((item) => {
@@ -667,7 +669,6 @@ export default function FinancePage() {
               m.available_on > today
             ) {
               saleHasPendingMovements[saleId] = true;
-              continue;
             }
 
             const amount = Number(m.amount || 0);
@@ -737,8 +738,7 @@ export default function FinancePage() {
           if (!lead?.deposit_paid) return 0;
           const amount = Number(lead.deposit_amount || 0);
           const currency = lead.deposit_currency || "ARS";
-          const saleRate =
-            Number(sale.fx_rate_used || 0) || fxRate;
+          const saleRate = Number(sale.fx_rate_used || 0) || fxRate;
           if (currency === "USD") return amount;
           if (currency === "USDT")
             return saleRate ? (amount * (usdtRate || 1)) / saleRate : amount;
@@ -747,14 +747,13 @@ export default function FinancePage() {
         })();
         return {
           ...sale,
-          accredited_total_usd: saleAccreditedIncome[sale.id] != null
-            ? baseAccredited + tradeInUsd + depositUsd
-            : baseAccredited + depositUsd,
+          accredited_total_usd:
+            saleAccreditedIncome[sale.id] != null
+              ? baseAccredited + tradeInUsd + depositUsd
+              : baseAccredited + depositUsd,
           trade_in_usd: tradeInUsd,
           deposit_usd: depositUsd,
-          income_pending:
-            !saleAccreditedIncome[sale.id] &&
-            Boolean(saleHasPendingMovements[sale.id]),
+          income_pending: Boolean(saleHasPendingMovements[sale.id]),
           commission_usd: commissionUsd,
         };
       });
@@ -882,7 +881,6 @@ export default function FinancePage() {
               m.available_on > today
             ) {
               saleHasPendingMovements[saleId] = true;
-              continue;
             }
 
             const amount = Number(m.amount || 0);
@@ -952,8 +950,7 @@ export default function FinancePage() {
           if (!lead?.deposit_paid) return 0;
           const amount = Number(lead.deposit_amount || 0);
           const currency = lead.deposit_currency || "ARS";
-          const saleRate =
-            Number(sale.fx_rate_used || 0) || fxRate;
+          const saleRate = Number(sale.fx_rate_used || 0) || fxRate;
           if (currency === "USD") return amount;
           if (currency === "USDT")
             return saleRate ? (amount * (usdtRate || 1)) / saleRate : amount;
@@ -962,14 +959,13 @@ export default function FinancePage() {
         })();
         return {
           ...sale,
-          accredited_total_usd: saleAccreditedIncome[sale.id] != null
-            ? baseAccredited + tradeInUsd + depositUsd
-            : baseAccredited + depositUsd,
+          accredited_total_usd:
+            saleAccreditedIncome[sale.id] != null
+              ? baseAccredited + tradeInUsd + depositUsd
+              : baseAccredited + depositUsd,
           trade_in_usd: tradeInUsd,
           deposit_usd: depositUsd,
-          income_pending:
-            !saleAccreditedIncome[sale.id] &&
-            Boolean(saleHasPendingMovements[sale.id]),
+          income_pending: Boolean(saleHasPendingMovements[sale.id]),
           commission_usd: commissionUsd,
         };
       });
@@ -1144,7 +1140,8 @@ export default function FinancePage() {
     return selectedSalesChannels.map((channelId) => {
       if (channelId === "none") return "SIN CANAL";
       return (
-        salesChannels.find((channel) => String(channel.id) === channelId)
+        salesChannels
+          .find((channel) => String(channel.id) === channelId)
           ?.name?.toUpperCase() || `CANAL ${channelId}`
       );
     });
@@ -1446,8 +1443,8 @@ export default function FinancePage() {
         </Card>
       </div>
 
-      <Card>
-        <CardHeader className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+      <div>
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between mb-4">
           <div className="flex flex-col gap-2">
             <CardTitle>Ingresos netos por mes - Ventas concretadas</CardTitle>
             <p className="text-sm text-muted-foreground">
@@ -1455,7 +1452,7 @@ export default function FinancePage() {
             </p>
           </div>
           <div className="flex flex-col gap-4 md:flex-row md:items-end md:gap-3">
-            <div className="grid gap-1 min-w-[150px]">
+            <div className="grid gap-1">
               <span className="text-xs text-muted-foreground">Año</span>
               <Select
                 value={String(selectedYear)}
@@ -1473,11 +1470,14 @@ export default function FinancePage() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="grid gap-1 min-w-[260px]">
+            <div className="grid gap-1 ">
               <span className="text-xs text-muted-foreground">
                 Canal de venta
               </span>
-              <Popover open={channelFilterOpen} onOpenChange={setChannelFilterOpen}>
+              <Popover
+                open={channelFilterOpen}
+                onOpenChange={setChannelFilterOpen}
+              >
                 <PopoverTrigger asChild>
                   <Button
                     variant="outline"
@@ -1531,7 +1531,8 @@ export default function FinancePage() {
                     <div className="my-1 h-px bg-border" />
                     {salesChannels.map((channel) => {
                       const channelId = String(channel.id);
-                      const isSelected = selectedSalesChannels.includes(channelId);
+                      const isSelected =
+                        selectedSalesChannels.includes(channelId);
                       return (
                         <div
                           key={channel.id}
@@ -1545,9 +1546,7 @@ export default function FinancePage() {
                                 : "border-muted-foreground/40"
                             }`}
                           >
-                            {isSelected && (
-                              <IconCheck className="h-3 w-3" />
-                            )}
+                            {isSelected && <IconCheck className="h-3 w-3" />}
                           </div>
                           {channel.name?.toUpperCase() || `CANAL ${channelId}`}
                         </div>
@@ -1557,34 +1556,39 @@ export default function FinancePage() {
                 </PopoverContent>
               </Popover>
             </div>
-            <Button
-              variant="outline"
-              onClick={loadMonthlyNetIncome}
-              disabled={monthlyNetIncomeLoading}
-            >
-              <IconRefresh className="h-4 w-4" />
-              {monthlyNetIncomeLoading ? "Actualizando..." : "Actualizar"}
-            </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="icon">
-                  <IconDotsVertical className="h-4 w-4" />
+            <div className="grid gap-1">
+              <span className=" text-xs text-muted-foreground ">Opciones</span>
+              <div className="flex gap-3">
+                <Button
+                  variant="outline"
+                  onClick={loadMonthlyNetIncome}
+                  disabled={monthlyNetIncomeLoading}
+                >
+                  <IconRefresh className="h-4 w-4" />
+                  {monthlyNetIncomeLoading ? "Actualizando..." : "Actualizar"}
                 </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => openExportDialog("excel")}>
-                  <IconTableExport className="mr-2 h-4 w-4" />
-                  Exportar como Excel
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => openExportDialog("pdf")}>
-                  <IconPdf className="mr-2 h-4 w-4" />
-                  Exportar como PDF
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" size="icon">
+                      <IconDotsVertical className="h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={() => openExportDialog("excel")}>
+                      <IconTableExport className="mr-2 h-4 w-4" />
+                      Exportar como Excel
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => openExportDialog("pdf")}>
+                      <IconPdf className="mr-2 h-4 w-4" />
+                      Exportar como PDF
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            </div>
           </div>
-        </CardHeader>
-        <CardContent>
+        </div>
+        <div>
           {selectedSalesChannelLabels.length > 1 && (
             <div className="mb-3 flex flex-wrap items-center gap-2 rounded-md border border-green-200 bg-gray-800 px-3 py-2 text-sm text-green-800">
               <span className="font-medium text-white">Canales filtrados:</span>
@@ -1661,13 +1665,17 @@ export default function FinancePage() {
               </TableBody>
             </Table>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
 
       <Card>
         <CardHeader className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <CardTitle>Balance por cuenta</CardTitle>
-          <Button onClick={loadStaticData} disabled={loading} variant={"outline"}>
+          <Button
+            onClick={loadStaticData}
+            disabled={loading}
+            variant={"outline"}
+          >
             <IconRefresh className="h-4 w-4" />
             {loading ? "Actualizando..." : "Actualizar"}
           </Button>
