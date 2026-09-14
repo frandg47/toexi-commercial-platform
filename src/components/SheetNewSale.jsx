@@ -372,7 +372,7 @@ const buildSelectedVariant = (variant) => ({
       const { data, error } = await supabase
         .from("product_variants")
         .select(
-          "id, variant_name, color, storage, ram, usd_price, wholesale_price, stock, products(name, inventory_tracking_mode)"
+          "id, variant_name, sku, color, storage, ram, usd_price, wholesale_price, stock, products(name, inventory_tracking_mode)"
         )
         .in("id", ids);
 
@@ -442,7 +442,7 @@ const buildSelectedVariant = (variant) => ({
           inventory_tracking_mode: product.inventory_tracking_mode || "quantity",
           stock: stockTotal,
         };
-      });
+      }).filter((p) => p.stock > 0);
 
       setProducts(normalized);
     };
@@ -453,19 +453,44 @@ const buildSelectedVariant = (variant) => ({
   useEffect(() => {
     if (!selectedProduct || !focusVariant) return;
     const q = searchVariant.trim();
+    // Se neutralizan los caracteres que rompen la sintaxis del filtro .or()
+    const qSafe = q.replace(/[,()]/g, " ").trim();
+
     const fetchVariants = async () => {
-        const { data } = await supabase
-          .from("product_variants")
-          .select(
-            "id, variant_name, color, storage, ram, usd_price, wholesale_price, stock, products(name, inventory_tracking_mode)"
-          )
-          .eq("product_id", selectedProduct.id)
-          .eq("active", true)
-          .gt("stock", 0)
-          .ilike("variant_name", `%${q}%`)
-          .limit(40);
-        setVariants(data || []);
-      };
+      let query = supabase
+        .from("product_variants")
+        .select(
+          "id, variant_name, sku, color, storage, ram, usd_price, wholesale_price, stock, products(name, inventory_tracking_mode)"
+        )
+        .eq("product_id", selectedProduct.id)
+        .eq("active", true)
+        .gt("stock", 0);
+
+      if (qSafe) {
+        query = query.or(
+          `variant_name.ilike.%${qSafe}%,sku.ilike.%${qSafe}%,color.ilike.%${qSafe}%`
+        );
+      }
+
+      const { data } = await query.order("id", { ascending: true }).limit(40);
+
+      // Un match exacto de SKU va siempre primero: es lo que devuelve la
+      // pistola lectora al escanear la etiqueta pegada en el producto.
+      const needle = q.toLowerCase();
+      const sorted = [...(data || [])].sort((a, b) => {
+        const aExact =
+          String(a.sku || "").trim().toLowerCase() === needle && needle !== ""
+            ? 0
+            : 1;
+        const bExact =
+          String(b.sku || "").trim().toLowerCase() === needle && needle !== ""
+            ? 0
+            : 1;
+        return aExact - bExact;
+      });
+
+      setVariants(sorted);
+    };
     fetchVariants();
   }, [selectedProduct, focusVariant, searchVariant]);
 
@@ -517,7 +542,7 @@ const buildSelectedVariant = (variant) => ({
     if (loadedVariant) {
       handleAddVariant(loadedVariant);
       setBarcodeSearch("");
-      toast.success("Producto agregado por codigo de barras");
+      toast.success("Producto agregado por codigo");
       barcodeInputRef.current?.focus();
       return;
     }
@@ -525,32 +550,71 @@ const buildSelectedVariant = (variant) => ({
     setBarcodeLoading(true);
 
     try {
+      // Busqueda global por SKU o barcode: la etiqueta ya identifica la
+      // variante, no hace falta elegir el producto antes de escanear.
+      const needle = barcode.replace(/[,()]/g, " ").trim();
       const { data, error } = await supabase
         .from("product_variants")
         .select(
-          "id, variant_name, color, storage, ram, usd_price, wholesale_price, stock, barcode, products(name, inventory_tracking_mode)"
+          "id, variant_name, sku, color, storage, ram, usd_price, wholesale_price, stock, barcode, products(id, name, active, inventory_tracking_mode)"
         )
-        .eq("barcode", barcode)
+        .or(`sku.ilike.${needle},barcode.ilike.${needle}`)
         .eq("active", true)
-        .gt("stock", 0)
-        .limit(1);
+        .limit(5);
 
       if (error) throw error;
 
-      const foundVariant = data?.[0];
+      const normalized = barcode.toLowerCase();
+      const foundVariant = (data || []).find(
+        (v) =>
+          String(v.sku || "").trim().toLowerCase() === normalized ||
+          String(v.barcode || "").trim().toLowerCase() === normalized
+      );
+
       if (!foundVariant) {
-        toast.error("No se encontro una variante con ese codigo de barras");
+        toast.error("No se encontro ninguna variante con ese codigo");
         barcodeInputRef.current?.focus();
         return;
       }
 
+      if (foundVariant.products?.active === false) {
+        toast.error("El producto de esta variante esta inactivo");
+        setBarcodeSearch("");
+        barcodeInputRef.current?.focus();
+        return;
+      }
+
+      if (Number(foundVariant.stock || 0) <= 0) {
+        toast.error("La variante escaneada no tiene stock disponible");
+        setBarcodeSearch("");
+        barcodeInputRef.current?.focus();
+        return;
+      }
+
+      // Deja la UI consistente con lo que se acaba de escanear
+      if (foundVariant.products?.id) {
+        setSelectedProduct((prev) =>
+          prev?.id === foundVariant.products.id
+            ? prev
+            : {
+                id: foundVariant.products.id,
+                name: foundVariant.products.name,
+                inventory_tracking_mode:
+                  foundVariant.products.inventory_tracking_mode || "quantity",
+                stock: foundVariant.stock,
+              }
+        );
+      }
+
       handleAddVariant(foundVariant);
       setBarcodeSearch("");
-      toast.success("Producto agregado por codigo de barras");
+      toast.success(
+        `Agregado: ${foundVariant.sku || foundVariant.variant_name || ""}`
+      );
       barcodeInputRef.current?.focus();
     } catch (error) {
-      console.error("Error buscando codigo de barras:", error);
-      toast.error("No se pudo buscar el codigo de barras");
+      console.error("Error buscando codigo:", error);
+      toast.error("No se pudo buscar el codigo");
     } finally {
       setBarcodeLoading(false);
     }
@@ -601,7 +665,7 @@ const buildSelectedVariant = (variant) => ({
       .select("id, variant_id, identifier_value, status")
       .eq("variant_id", variantId)
       .eq("identifier_normalized", normalizedIdentifier)
-      .eq("status", SERIAL_AVAILABLE_STATUS)
+      .in("status", ["available", "reentered"])
       .limit(1);
 
     if (error) {
@@ -1030,14 +1094,14 @@ const buildSelectedVariant = (variant) => ({
             <div className="space-y-4">
               <h3 className="font-medium ">Seleccionar productos</h3>
 
-              {/* Codigo de barras */}
+              {/* Escaneo de etiqueta / SKU */}
               <div className="space-y-1">
-                {/* <div className="relative">
+                <div className="relative">
                   <IconScan className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
                     ref={barcodeInputRef}
-                    className="pl-9"
-                    placeholder="Escanear o escribir codigo de barras..."
+                    className="pl-9 font-mono"
+                    placeholder="Escanear etiqueta o escribir SKU..."
                     value={barcodeSearch}
                     onChange={(e) => setBarcodeSearch(e.target.value)}
                     onKeyDown={(e) => {
@@ -1048,10 +1112,10 @@ const buildSelectedVariant = (variant) => ({
                     }}
                     disabled={barcodeLoading}
                   />
-                </div> */}
+                </div>
                 {barcodeLoading && (
                   <p className="text-xs text-muted-foreground">
-                    Buscando codigo de barras...
+                    Buscando codigo...
                   </p>
                 )}
               </div>
@@ -1077,10 +1141,6 @@ const buildSelectedVariant = (variant) => ({
                             key={p.id}
                             className="w-full text-left px-3 py-2 hover:bg-muted"
                             onClick={() => {
-                              if (Number(p.stock || 0) <= 0) {
-                                toast.warning("Producto sin stock");
-                                return;
-                              }
                               setSelectedProduct(p);
                               setFocusProduct(false);
                               setSearchProduct("");
@@ -1108,13 +1168,24 @@ const buildSelectedVariant = (variant) => ({
                 <Input
                   placeholder={
                     selectedProduct
-                      ? "Buscar variantes disponibles..."
+                      ? "Buscar por nombre, color o SKU..."
                       : "Selecciona un producto primero"
                   }
                   value={searchVariant}
                   onFocus={() => setFocusVariant(true)}
                   onBlur={() => setTimeout(() => setFocusVariant(false), 160)}
                   onChange={(e) => setSearchVariant(e.target.value)}
+                  onKeyDown={(e) => {
+                    // Enter agrega el primer resultado. Como los match exactos
+                    // de SKU se ordenan primero, tambien sirve al escanear.
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      if (variants.length > 0) {
+                        handleAddVariant(variants[0]);
+                        setSearchVariant("");
+                      }
+                    }
+                  }}
                   disabled={!selectedProduct}
                 />
                 {focusVariant && selectedProduct && (
@@ -1128,8 +1199,15 @@ const buildSelectedVariant = (variant) => ({
                             onClick={() => handleAddVariant(v)}
                             className="w-full text-left px-3 py-2 hover:bg-muted"
                           >
-                            <div className="font-medium">
-                              {v.products?.name} - {v.variant_name}
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium truncate">
+                                {v.products?.name} - {v.variant_name}
+                              </span>
+                              {v.sku && (
+                                <span className="ml-auto shrink-0 font-mono text-[10px] px-1.5 py-0.5 rounded border bg-muted/40">
+                                  {v.sku}
+                                </span>
+                              )}
                             </div>
                             <div className="text-xs text-muted-foreground">
                               {v.color || ""} • Stock: {v.stock} • USD{" "}
@@ -1173,6 +1251,11 @@ const buildSelectedVariant = (variant) => ({
                                 {v.storage ? ` • ${v.storage}GB` : ""}
                                 {v.ram ? ` • ${v.ram} RAM` : ""}
                               </div>
+                              {v.sku && (
+                                <div className="font-mono text-[10px] text-muted-foreground mt-0.5">
+                                  {v.sku}
+                                </div>
+                              )}
                             </div>
                           </div>
 

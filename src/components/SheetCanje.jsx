@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Sheet,
   SheetContent,
@@ -39,6 +39,7 @@ import {
   IconTrash,
   IconUserPlus,
   IconArrowsExchange,
+  IconScan,
 } from "@tabler/icons-react";
 
 const formatARS = (n) =>
@@ -118,6 +119,9 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
   const [focusVariant, setFocusVariant] = useState(false);
   const [cart, setCart] = useState([]);
   const [notes, setNotes] = useState("");
+  const [barcodeSearch, setBarcodeSearch] = useState("");
+  const [barcodeLoading, setBarcodeLoading] = useState(false);
+  const barcodeInputRef = useRef(null);
 
   // Load data on open
   useEffect(() => {
@@ -137,6 +141,8 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
     setReceivedList([]);
     setCart([]);
     setNotes("");
+    setBarcodeSearch("");
+    setBarcodeLoading(false);
 
     const load = async () => {
       const [sellerRes, chRes, fxRes] = await Promise.all([
@@ -196,7 +202,7 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
           inventory_tracking_mode: product.inventory_tracking_mode || "quantity",
           stock: stockTotal,
         };
-      });
+      }).filter((p) => p.stock > 0);
       setProducts(normalized);
     };
     fetchProducts();
@@ -269,6 +275,12 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
     }, 300);
     return () => clearTimeout(timer);
   }, [searchVariant, selectedProduct, step, focusVariant]);
+
+  useEffect(() => {
+    if (!open || step !== 3) return;
+    const timer = setTimeout(() => barcodeInputRef.current?.focus(), 120);
+    return () => clearTimeout(timer);
+  }, [open, step]);
 
   // Effective FX rate for the current form entry
   const effectiveRate = useMemo(() => {
@@ -465,7 +477,7 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
       .select("id, variant_id, identifier_value, status")
       .eq("variant_id", variantId)
       .eq("identifier_normalized", normalizedIdentifier)
-      .eq("status", SERIAL_AVAILABLE_STATUS)
+      .in("status", ["available", "reentered"])
       .limit(1);
 
     if (error) {
@@ -508,6 +520,102 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
           : v
       )
     );
+  };
+
+  const normalizeBarcode = (value) => value.trim();
+
+  const variantMatchesBarcode = (variant, barcode) => {
+    const normalized = barcode.toLowerCase();
+    return ["barcode", "bar_code", "sku", "code", "codigo"].some((field) => {
+      const value = variant?.[field];
+      return value && String(value).trim().toLowerCase() === normalized;
+    });
+  };
+
+  const handleBarcodeSubmit = async () => {
+    const barcode = normalizeBarcode(barcodeSearch);
+    if (!barcode || barcodeLoading) return;
+
+    const loadedVariant = buyVariants.find((variant) =>
+      variantMatchesBarcode(variant, barcode)
+    );
+
+    if (loadedVariant) {
+      addToCart(loadedVariant);
+      setBarcodeSearch("");
+      toast.success("Producto agregado por codigo");
+      barcodeInputRef.current?.focus();
+      return;
+    }
+
+    setBarcodeLoading(true);
+
+    try {
+      const needle = barcode.replace(/[,()]/g, " ").trim();
+      const { data, error } = await supabase
+        .from("product_variants")
+        .select(
+          "id, variant_name, sku, color, storage, ram, usd_price, wholesale_price, stock, barcode, products(id, name, active, inventory_tracking_mode)"
+        )
+        .or(`sku.ilike.${needle},barcode.ilike.${needle}`)
+        .eq("active", true)
+        .limit(5);
+
+      if (error) throw error;
+
+      const normalized = barcode.toLowerCase();
+      const foundVariant = (data || []).find(
+        (v) =>
+          String(v.sku || "").trim().toLowerCase() === normalized ||
+          String(v.barcode || "").trim().toLowerCase() === normalized
+      );
+
+      if (!foundVariant) {
+        toast.error("No se encontro ninguna variante con ese codigo");
+        barcodeInputRef.current?.focus();
+        return;
+      }
+
+      if (foundVariant.products?.active === false) {
+        toast.error("El producto de esta variante esta inactivo");
+        setBarcodeSearch("");
+        barcodeInputRef.current?.focus();
+        return;
+      }
+
+      if (Number(foundVariant.stock || 0) <= 0) {
+        toast.error("La variante escaneada no tiene stock disponible");
+        setBarcodeSearch("");
+        barcodeInputRef.current?.focus();
+        return;
+      }
+
+      if (foundVariant.products?.id) {
+        setSelectedProduct((prev) =>
+          prev?.id === foundVariant.products.id
+            ? prev
+            : {
+                id: foundVariant.products.id,
+                name: foundVariant.products.name,
+                inventory_tracking_mode:
+                  foundVariant.products.inventory_tracking_mode || "quantity",
+                stock: foundVariant.stock,
+              }
+        );
+      }
+
+      addToCart(foundVariant);
+      setBarcodeSearch("");
+      toast.success(
+        `Agregado: ${foundVariant.sku || foundVariant.variant_name || ""}`
+      );
+      barcodeInputRef.current?.focus();
+    } catch (error) {
+      console.error("Error buscando codigo:", error);
+      toast.error("No se pudo buscar el codigo");
+    } finally {
+      setBarcodeLoading(false);
+    }
   };
 
   // Submit
@@ -685,8 +793,17 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
                   {focusSeller && (
                     <div className="absolute z-[50] mt-1 w-full rounded-md border bg-background shadow">
                       <ScrollArea className="max-h-[240px] overflow-y-auto">
-                        {sellers.length > 0 ? (
-                          sellers.map((s) => (
+                        {(() => {
+                          const q = searchSeller.toLowerCase();
+                          const filtered = sellers.filter((s) => {
+                            if (!q) return true;
+                            const fullName = `${s.name || ""} ${s.last_name || ""}`.toLowerCase();
+                            const phone = s.phone || "";
+                            const email = s.email || "";
+                            return fullName.includes(q) || phone.includes(q) || email.includes(q);
+                          });
+                          return filtered.length > 0 ? (
+                            filtered.map((s) => (
                             <button
                               type="button"
                               key={s.id_auth}
@@ -705,11 +822,12 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
                               </div>
                             </button>
                           ))
-                        ) : (
-                          <div className="px-3 py-2 text-sm text-muted-foreground">
-                            Sin coincidencias
-                          </div>
-                        )}
+                          ) : (
+                            <div className="px-3 py-2 text-sm text-muted-foreground">
+                              Sin coincidencias
+                            </div>
+                          );
+                        })()}
                       </ScrollArea>
                     </div>
                   )}
@@ -939,6 +1057,31 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
           {/* ========== PASO 3: PRODUCTOS A COMPRAR ========== */}
           {step === 3 && (
             <div className="space-y-4">
+              <div className="space-y-1">
+                <div className="relative">
+                  <IconScan className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    ref={barcodeInputRef}
+                    className="pl-9 font-mono"
+                    placeholder="Escanear etiqueta o escribir SKU..."
+                    value={barcodeSearch}
+                    onChange={(e) => setBarcodeSearch(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        handleBarcodeSubmit();
+                      }
+                    }}
+                    disabled={barcodeLoading}
+                  />
+                </div>
+                {barcodeLoading && (
+                  <p className="text-xs text-muted-foreground">
+                    Buscando codigo...
+                  </p>
+                )}
+              </div>
+
               <div className="relative">
                 <Input
                   placeholder="Buscar producto..."
@@ -956,10 +1099,6 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
                             type="button"
                             key={p.id}
                             onClick={() => {
-                              if (Number(p.stock || 0) <= 0) {
-                                toast.warning("Producto sin stock");
-                                return;
-                              }
                               setSelectedProduct(p);
                               setFocusProduct(false);
                               setSearchProduct("");
