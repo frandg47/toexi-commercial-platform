@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { getAdminSales } from "../utils/getAdminSales";
 import { getReceivedItems, getTotalReceivedArs } from "@/utils/tradeInHelpers";
 
@@ -234,6 +234,7 @@ export function SalesList() {
   const [cancelingProcess, setCancelingProcess] = useState(false);
   const [canjeReceivedUnits, setCanjeReceivedUnits] = useState([]);
   const [deleteCanjeUnit, setDeleteCanjeUnit] = useState(true);
+  const transitioningToBucketRef = useRef(false);
 
   // 📌 Estados para cancelar venta (solo ocultar de caja)
   const [confirmCancelOpen, setConfirmCancelOpen] = useState(false);
@@ -809,6 +810,10 @@ export function SalesList() {
       toast.error("Solo owner o superadmin puede anular ventas");
       return;
     }
+    if (sale.status === "cancelado") {
+      toast.error("Esta venta ya fue cancelada. No se puede anular.");
+      return;
+    }
     setCancelingS(sale);
     setCancelReason("");
     setDeleteCanjeUnit(true);
@@ -822,6 +827,10 @@ export function SalesList() {
   };
 
   const closeCancelDialog = () => {
+    if (transitioningToBucketRef.current) {
+      transitioningToBucketRef.current = false;
+      return;
+    }
     setCancelOpen(false);
     setCancelingS(null);
     setCancelReason("");
@@ -918,6 +927,20 @@ export function SalesList() {
       // Eliminar unidad recibida por canje si se eligió
       if (deleteCanjeUnit && canjeReceivedUnits.length > 0) {
         for (const canjeUnit of canjeReceivedUnits) {
+          // Decrementar stock de la variante recibida antes de eliminar
+          if (canjeUnit.variant_id) {
+            const { data: rv, error: rvErr } = await supabase
+              .from("product_variants")
+              .select("stock")
+              .eq("id", canjeUnit.variant_id)
+              .single();
+            if (!rvErr && rv) {
+              await supabase
+                .from("product_variants")
+                .update({ stock: Math.max(0, (rv.stock || 0) - 1) })
+                .eq("id", canjeUnit.variant_id);
+            }
+          }
           await supabase
             .from("inventory_units")
             .delete()
@@ -950,6 +973,7 @@ export function SalesList() {
       toast.error("Debes ingresar un motivo de anulación");
       return;
     }
+    transitioningToBucketRef.current = true;
     setCancelOpen(false);
     setBucketOpen(true);
   };
@@ -959,6 +983,7 @@ export function SalesList() {
     setSelectedBucket("available");
     setCanjeReceivedUnits([]);
     setDeleteCanjeUnit(true);
+    transitioningToBucketRef.current = false;
   };
 
   const completeCancelSale = async () => {
@@ -1212,7 +1237,7 @@ export function SalesList() {
           .select("id, identifier_value")
           .eq("variant_id", Number(row.variant_id))
           .eq("identifier_normalized", normalizedIdentifier)
-          .eq("status", "available")
+          .in("status", ["available", "reentered"])
           .limit(1);
 
         if (inventoryError) {
@@ -1471,7 +1496,9 @@ export function SalesList() {
                           <DropdownMenuItem
                             onClick={() => startCancelSale(s)}
                             disabled={
-                              s.status === "anulado" || s.status === "pending"
+                              s.status === "anulado" ||
+                              s.status === "pending" ||
+                              s.status === "cancelado"
                             }
                             className="text-destructive focus:text-destructive"
                           >
