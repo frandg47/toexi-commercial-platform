@@ -247,13 +247,12 @@ export default function InventoryConfig() {
                   })
                   .range(from, to);
 
-                if (debouncedSearch) {
-                  const term = `%${debouncedSearch}%`;
-                  query = query.or(`identifier_value.ilike.${term}`);
-                }
-
                 if (filters.unitStatus !== "all") {
                   query = query.eq("status", filters.unitStatus);
+                }
+
+                if (!debouncedSearch) {
+                  query = query.range(from, to);
                 }
 
                 return query;
@@ -473,7 +472,25 @@ export default function InventoryConfig() {
     return summaryRows.slice(from, from + summaryPageSize);
   }, [summaryRows, summaryPage, summaryPageSize]);
 
-  const filteredUnits = units;
+  const filteredUnits = useMemo(() => {
+    if (!debouncedSearch) return units;
+    const query = normalizeText(debouncedSearch);
+    return units.filter((unit) => {
+      const searchable = normalizeText([
+        unit.identifier_value,
+        unit.variant?.products?.name,
+        unit.variant?.variant_name,
+        unit.variant?.color,
+        unit.variant?.storage,
+        unit.variant?.ram,
+        unit.variant?.products?.brands?.name,
+      ].filter(Boolean).join(" "));
+      return searchable.includes(query);
+    });
+  }, [units, debouncedSearch]);
+
+  const effectiveUnitsCount = debouncedSearch ? filteredUnits.length : unitsTotalCount;
+  const effectiveUnitsPage = debouncedSearch ? 1 : unitsPage;
 
   const openSerialLoadDialog = useCallback((variant) => {
     setSerialLoadVariant(variant);
@@ -830,6 +847,15 @@ export default function InventoryConfig() {
   const handleDeleteUnit = useCallback(async () => {
     if (!deletingUnit) return;
 
+    if (deletingUnit.status === "sold") {
+      toast.error("No se puede eliminar", {
+        description: "No se pueden eliminar unidades con estado Vendida.",
+      });
+      setDeleteDialogOpen(false);
+      setDeletingUnit(null);
+      return;
+    }
+
     setDeleteSubmitting(true);
 
     const isAvailable = ["available", "reentered", "returned_available"].includes(
@@ -1041,7 +1067,7 @@ export default function InventoryConfig() {
               <IconSearch className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 className="pl-9"
-                placeholder={activeTab === "units" ? "Buscar por IMEI únicamente" : "Buscar por producto, variante"}
+                placeholder={activeTab === "units" ? "Buscar por IMEI, producto, variante..." : "Buscar por producto, variante..."}
                 value={searchTerm}
                 onChange={(event) => setSearchTerm(event.target.value)}
               />
@@ -1384,6 +1410,7 @@ export default function InventoryConfig() {
                                 {isOwner && (
                                   <DropdownMenuItem
                                     className="text-rose-700 focus:text-rose-700"
+                                    disabled={unit.status === "sold"}
                                     onClick={() => {
                                       setDeletingUnit(unit);
                                       setDeleteDialogOpen(true);
@@ -1402,46 +1429,50 @@ export default function InventoryConfig() {
                   </Table>
                   <div className="flex flex-col items-center justify-between gap-3 py-3 sm:flex-row">
                     <div className="text-sm text-muted-foreground">
-                      {filteredUnits.length > 0 && unitsTotalCount > 0
-                        ? `Mostrando ${units.length} de ${unitsTotalCount} unidades`
-                        : `${unitsTotalCount} unidades en total`}
+                      {debouncedSearch
+                        ? `${filteredUnits.length} resultado(s)`
+                        : unitsTotalCount > 0
+                          ? `Mostrando ${units.length} de ${unitsTotalCount} unidades`
+                          : `${unitsTotalCount} unidades en total`}
                     </div>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setUnitsPage((p) => Math.max(1, p - 1))}
-                        disabled={unitsPage <= 1 || loading}
-                      >
-                        Anterior
-                      </Button>
-                      <div className="text-sm">
-                        {unitsPage} /{" "}
-                        {Math.max(
-                          1,
-                          Math.ceil(unitsTotalCount / unitsPageSize),
-                        )}
+                    {!debouncedSearch && (
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setUnitsPage((p) => Math.max(1, p - 1))}
+                          disabled={unitsPage <= 1 || loading}
+                        >
+                          Anterior
+                        </Button>
+                        <div className="text-sm">
+                          {unitsPage} /{" "}
+                          {Math.max(
+                            1,
+                            Math.ceil(unitsTotalCount / unitsPageSize),
+                          )}
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            setUnitsPage((p) =>
+                              Math.min(
+                                Math.ceil(unitsTotalCount / unitsPageSize),
+                                p + 1,
+                              ),
+                            )
+                          }
+                          disabled={
+                            unitsPage >=
+                              Math.ceil(unitsTotalCount / unitsPageSize) ||
+                            loading
+                          }
+                        >
+                          Siguiente
+                        </Button>
                       </div>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() =>
-                          setUnitsPage((p) =>
-                            Math.min(
-                              Math.ceil(unitsTotalCount / unitsPageSize),
-                              p + 1,
-                            ),
-                          )
-                        }
-                        disabled={
-                          unitsPage >=
-                            Math.ceil(unitsTotalCount / unitsPageSize) ||
-                          loading
-                        }
-                      >
-                        Siguiente
-                      </Button>
-                    </div>
+                    )}
                   </div>
                 </div>
               )}
