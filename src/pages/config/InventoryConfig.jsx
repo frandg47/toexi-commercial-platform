@@ -28,6 +28,16 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   Table,
   TableBody,
   TableCell,
@@ -47,6 +57,7 @@ import {
   IconRefresh,
   IconSearch,
   IconStack2,
+  IconTrash,
 } from "@tabler/icons-react";
 
 const STATUS_LABELS = {
@@ -157,7 +168,8 @@ const normalizeIdentifierKey = (value) =>
     .replace(/[^a-z0-9]/g, "");
 
 export default function InventoryConfig() {
-  const { user } = useAuth();
+  const { user, role } = useAuth();
+  const isOwner = role?.toLowerCase() === "owner";
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [variants, setVariants] = useState([]);
@@ -184,6 +196,10 @@ export default function InventoryConfig() {
   const [duplicateUnits, setDuplicateUnits] = useState([]);
   const [pendingIdentifier, setPendingIdentifier] = useState("");
   const [assignToCurrent, setAssignToCurrent] = useState(false);
+
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deletingUnit, setDeletingUnit] = useState(null);
+  const [deleteSubmitting, setDeleteSubmitting] = useState(false);
 
   const [unitsPage, setUnitsPage] = useState(1);
   const unitsPageSize = 30;
@@ -811,6 +827,55 @@ export default function InventoryConfig() {
     fetchInventoryData,
   ]);
 
+  const handleDeleteUnit = useCallback(async () => {
+    if (!deletingUnit) return;
+
+    setDeleteSubmitting(true);
+
+    const isAvailable = ["available", "reentered", "returned_available"].includes(
+      deletingUnit.status,
+    );
+
+    if (isAvailable && deletingUnit.variant_id) {
+      const { data: variant, error: variantError } = await supabase
+        .from("product_variants")
+        .select("stock")
+        .eq("id", deletingUnit.variant_id)
+        .single();
+
+      if (!variantError && variant) {
+        const newStock = Math.max((variant.stock || 0) - 1, 0);
+        await supabase
+          .from("product_variants")
+          .update({ stock: newStock })
+          .eq("id", deletingUnit.variant_id);
+      }
+    }
+
+    const { error: deleteError } = await supabase
+      .from("inventory_units")
+      .delete()
+      .eq("id", deletingUnit.id);
+
+    if (deleteError) {
+      console.error(deleteError);
+      toast.error("Error", {
+        description: "No se pudo eliminar la unidad.",
+      });
+      setDeleteSubmitting(false);
+      return;
+    }
+
+    toast.success("Unidad eliminada", {
+      description: `La unidad ${deletingUnit.identifier_value || `#${deletingUnit.id}`} fue eliminada.`,
+    });
+
+    setDeleteDialogOpen(false);
+    setDeletingUnit(null);
+    setDeleteSubmitting(false);
+    fetchInventoryData();
+  }, [deletingUnit, fetchInventoryData]);
+
   return (
     <div className="@container/main flex flex-1 flex-col gap-4 py-6">
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
@@ -1316,6 +1381,18 @@ export default function InventoryConfig() {
                                   <IconHistory className="mr-2 h-4 w-4" />
                                   Historial
                                 </DropdownMenuItem>
+                                {isOwner && (
+                                  <DropdownMenuItem
+                                    className="text-rose-700 focus:text-rose-700"
+                                    onClick={() => {
+                                      setDeletingUnit(unit);
+                                      setDeleteDialogOpen(true);
+                                    }}
+                                  >
+                                    <IconTrash className="mr-2 h-4 w-4" />
+                                    Eliminar
+                                  </DropdownMenuItem>
+                                )}
                               </DropdownMenuContent>
                             </DropdownMenu>
                           </TableCell>
@@ -1374,7 +1451,7 @@ export default function InventoryConfig() {
       </Tabs>
 
       <Dialog open={historyOpen} onOpenChange={setHistoryOpen}>
-        <DialogContent className="sm:max-w-3xl">
+        <DialogContent className="!w-[60vw] !max-w-[90vw] max-h-[85svh] overflow-y-auto rounded-2xl p-4 sm:p-6">
           <DialogHeader>
             <DialogTitle>
               Historial de unidad {selectedUnit?.identifier_value || ""}
@@ -1667,6 +1744,42 @@ export default function InventoryConfig() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Eliminar unidad</AlertDialogTitle>
+            <AlertDialogDescription>
+              Se eliminara la unidad{" "}
+              <strong>{deletingUnit?.identifier_value || `#${deletingUnit?.id}`}</strong>
+              {["available", "reentered", "returned_available"].includes(
+                deletingUnit?.status,
+              ) && (
+                <>
+                  {" "}y se descontara <strong>1 unidad</strong> del stock de la variante
+                  correspondiente.
+                </>
+              )}
+              {" "}Esta accion no se puede deshacer.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteSubmitting}>
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(event) => {
+                event.preventDefault();
+                handleDeleteUnit();
+              }}
+              disabled={deleteSubmitting}
+              className="bg-rose-600 text-white hover:bg-rose-700"
+            >
+              {deleteSubmitting ? "Eliminando..." : "Eliminar"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
