@@ -504,7 +504,7 @@ export default function AftersalesPage() {
         .select("id")
         .eq("variant_id", Number(form.variant_id))
         .eq("identifier_normalized", normalizedIdentifier)
-        .eq("status", "available")
+        .in("status", ["available", "reentered"])
         .limit(1);
 
       if (inventoryError) {
