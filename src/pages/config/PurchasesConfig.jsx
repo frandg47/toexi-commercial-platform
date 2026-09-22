@@ -2,7 +2,6 @@
 import { Navigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContextProvider";
 import { supabase } from "@/lib/supabaseClient";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -187,6 +186,10 @@ const PurchasesConfig = () => {
   const [reentrySoldUnits, setReentrySoldUnits] = useState([]);
   const [pendingSavePayload, setPendingSavePayload] = useState(null);
   const [reentryChecking, setReentryChecking] = useState(false);
+
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [editingPurchaseId, setEditingPurchaseId] = useState(null);
+  const [editingPurchase, setEditingPurchase] = useState(null);
 
   const [form, setForm] = useState({
     provider_id: "",
@@ -431,41 +434,46 @@ const PurchasesConfig = () => {
         "Completa cantidades y costos validos para todos los items",
       );
     }
-    if (
-      payments.some(
-        (payment) =>
-          payment.account_id &&
-          (!payment.account_id || Number(payment.amount || 0) <= 0),
-      )
-    ) {
-      return toast.error("Si agregas un pago, completa cuenta y monto");
-    }
-    if (
-      payments.some((payment) => {
-        if (!payment.account_id || Number(payment.amount || 0) <= 0)
+
+    const isEdit = !!editingPurchaseId;
+
+    if (!isEdit) {
+      if (
+        payments.some(
+          (payment) =>
+            payment.account_id &&
+            (!payment.account_id || Number(payment.amount || 0) <= 0),
+        )
+      ) {
+        return toast.error("Si agregas un pago, completa cuenta y monto");
+      }
+      if (
+        payments.some((payment) => {
+          if (!payment.account_id || Number(payment.amount || 0) <= 0)
+            return false;
+          const account = displayAccounts.find(
+            (item) => String(item.id) === String(payment.account_id || ""),
+          );
+          if (!account) return true;
+          if (
+            account.currency !== "ARS" &&
+            !getEffectiveRateForCurrency(
+              account.currency,
+              form.rate_mode,
+              form.manual_fx_rate,
+              fxRate,
+              usdtRate,
+            )
+          ) {
+            return true;
+          }
           return false;
-        const account = displayAccounts.find(
-          (item) => String(item.id) === String(payment.account_id || ""),
+        })
+      ) {
+        return toast.error(
+          "Falta cotizacion activa para alguna de las cuentas elegidas",
         );
-        if (!account) return true;
-        if (
-          account.currency !== "ARS" &&
-          !getEffectiveRateForCurrency(
-            account.currency,
-            form.rate_mode,
-            form.manual_fx_rate,
-            fxRate,
-            usdtRate,
-          )
-        ) {
-          return true;
-        }
-        return false;
-      })
-    ) {
-      return toast.error(
-        "Falta cotizacion activa para alguna de las cuentas elegidas",
-      );
+      }
     }
 
     const currency = form.currency;
@@ -539,6 +547,14 @@ const PurchasesConfig = () => {
       setReentryChecking(false);
     }
 
+    if (isEdit) {
+      await handleSaveEdit(currency, rate);
+    } else {
+      await handleSaveCreate(currency, rate);
+    }
+  };
+
+  const handleSaveCreate = async (currency, rate) => {
     const paymentRows = payments
       .filter(
         (payment) => payment.account_id && Number(payment.amount || 0) > 0,
@@ -609,6 +625,285 @@ const PurchasesConfig = () => {
     }));
     setItems([]);
     setPayments([{ account_id: "", amount: "" }]);
+    setCreateDialogOpen(false);
+
+    await loadPurchases();
+  };
+
+  const handleSaveEdit = async (currency, rate) => {
+    const { data: originalItems } = await supabase
+      .from("purchase_items")
+      .select("id, variant_id, quantity, product_variants(products(inventory_tracking_mode))")
+      .eq("purchase_id", editingPurchaseId);
+
+    const originalIds = new Set(
+      (originalItems || []).map((i) => i.id),
+    );
+    const currentIds = new Set(
+      items.filter((i) => i._purchaseItemId).map((i) => i._purchaseItemId),
+    );
+
+    for (const origId of originalIds) {
+      if (!currentIds.has(origId)) {
+        const origItem = (originalItems || []).find((i) => i.id === origId);
+        const isSerial =
+          origItem?.product_variants?.products?.inventory_tracking_mode ===
+          "serial";
+
+        if (isSerial) {
+          const { count } = await supabase
+            .from("inventory_units")
+            .select("id", { count: "exact", head: true })
+            .eq("purchase_item_id", origId)
+            .in("status", ["available", "reentered"]);
+
+          if (count > 0) {
+            const { data: variant } = await supabase
+              .from("product_variants")
+              .select("stock")
+              .eq("id", origItem.variant_id)
+              .single();
+            if (variant) {
+              await supabase
+                .from("product_variants")
+                .update({ stock: Math.max((variant.stock || 0) - count, 0) })
+                .eq("id", origItem.variant_id);
+            }
+          }
+
+          await supabase
+            .from("inventory_units")
+            .delete()
+            .eq("purchase_item_id", origId);
+        } else {
+          const { data: variant } = await supabase
+            .from("product_variants")
+            .select("stock")
+            .eq("id", origItem.variant_id)
+            .single();
+          if (variant) {
+            await supabase
+              .from("product_variants")
+              .update({
+                stock: Math.max(
+                  (variant.stock || 0) - (origItem.quantity || 0),
+                  0,
+                ),
+              })
+              .eq("id", origItem.variant_id);
+          }
+        }
+
+        await supabase.from("purchase_items").delete().eq("id", origId);
+      }
+    }
+
+    for (const item of items) {
+      const qty = Number(item.quantity || 0);
+      const cost = Number(item.unit_cost || 0);
+      const subtotal = qty * cost;
+      const isSerial = isSerialTrackedVariant(item.variant);
+
+      if (item._purchaseItemId) {
+        const origItem = (originalItems || []).find(
+          (i) => i.id === item._purchaseItemId,
+        );
+        if (origItem && !isSerial) {
+          const qtyDiff = qty - (origItem.quantity || 0);
+          if (qtyDiff !== 0) {
+            const { data: variant } = await supabase
+              .from("product_variants")
+              .select("stock")
+              .eq("id", item.variant_id)
+              .single();
+            if (variant) {
+              const newStock = Math.max((variant.stock || 0) + qtyDiff, 0);
+              await supabase
+                .from("product_variants")
+                .update({ stock: newStock })
+                .eq("id", item.variant_id);
+            }
+          }
+        }
+
+        await supabase
+          .from("purchase_items")
+          .update({ quantity: qty, unit_cost: cost, subtotal })
+          .eq("id", item._purchaseItemId);
+
+        if (isSerial) {
+          const { data: currentSerials } = await supabase
+            .from("inventory_units")
+            .select("id, identifier_value, identifier_normalized")
+            .eq("purchase_item_id", item._purchaseItemId)
+            .in("status", ["available", "reentered"]);
+
+          const currentMap = new Map(
+            (currentSerials || []).map((s) => [
+              s.identifier_normalized,
+              s,
+            ]),
+          );
+
+          const newIdentifiers = parseIdentifiers(item.identifiersText);
+          const newNormalized = new Set(
+            newIdentifiers.map((id) => normalizeIdentifier(id)),
+          );
+
+          for (const [norm, serial] of currentMap) {
+            if (!newNormalized.has(norm)) {
+              await supabase.from("inventory_units").delete().eq("id", serial.id);
+            }
+          }
+
+          const existingNormalized = new Set(currentMap.keys());
+          const toAdd = newIdentifiers.filter(
+            (id) => !existingNormalized.has(normalizeIdentifier(id)),
+          );
+
+          if (toAdd.length > 0) {
+            const v_received_at =
+              form.purchase_date + "T00:00:00-03:00";
+            for (const identifier of toAdd) {
+              await supabase.from("inventory_units").insert({
+                variant_id: item.variant_id,
+                purchase_item_id: item._purchaseItemId,
+                identifier_value: identifier,
+                identifier_normalized: normalizeIdentifier(identifier),
+                status: "available",
+                received_at: v_received_at,
+              });
+            }
+
+            const { data: variant } = await supabase
+              .from("product_variants")
+              .select("stock")
+              .eq("id", item.variant_id)
+              .single();
+            if (variant) {
+              await supabase
+                .from("product_variants")
+                .update({ stock: (variant.stock || 0) + toAdd.length })
+                .eq("id", item.variant_id);
+            }
+          }
+
+          const removedCount = (currentSerials || []).filter(
+            (s) => !newNormalized.has(s.identifier_normalized),
+          ).length;
+          if (removedCount > 0) {
+            const { data: variant } = await supabase
+              .from("product_variants")
+              .select("stock")
+              .eq("id", item.variant_id)
+              .single();
+            if (variant) {
+              await supabase
+                .from("product_variants")
+                .update({
+                  stock: Math.max((variant.stock || 0) - removedCount, 0),
+                })
+                .eq("id", item.variant_id);
+            }
+          }
+        }
+      } else {
+        const { data: newItem, error: insertError } = await supabase
+          .from("purchase_items")
+          .insert({
+            purchase_id: editingPurchaseId,
+            variant_id: item.variant_id,
+            quantity: qty,
+            unit_cost: cost,
+            subtotal,
+          })
+          .select("id")
+          .single();
+
+        if (insertError) {
+          toast.error("No se pudo agregar el producto", {
+            description: insertError.message,
+          });
+          return;
+        }
+
+        if (isSerial) {
+          const identifiers = parseIdentifiers(item.identifiersText);
+          if (identifiers.length > 0) {
+            const v_received_at =
+              form.purchase_date + "T00:00:00-03:00";
+
+            for (const identifier of identifiers) {
+              const identifierNormalized = normalizeIdentifier(identifier);
+              await supabase.from("inventory_units").insert({
+                variant_id: item.variant_id,
+                purchase_item_id: newItem.id,
+                identifier_value: identifier,
+                identifier_normalized: identifierNormalized,
+                status: "available",
+                received_at: v_received_at,
+              });
+            }
+
+            const { data: variant } = await supabase
+              .from("product_variants")
+              .select("stock")
+              .eq("id", item.variant_id)
+              .single();
+
+            if (variant) {
+              await supabase
+                .from("product_variants")
+                .update({ stock: (variant.stock || 0) + identifiers.length })
+                .eq("id", item.variant_id);
+            }
+          }
+        } else {
+          const { data: variant } = await supabase
+            .from("product_variants")
+            .select("stock")
+            .eq("id", item.variant_id)
+            .single();
+          if (variant) {
+            await supabase
+              .from("product_variants")
+              .update({ stock: (variant.stock || 0) + qty })
+              .eq("id", item.variant_id);
+          }
+        }
+      }
+    }
+
+    const newTotal = items.reduce(
+      (acc, i) => acc + Number(i.quantity || 0) * Number(i.unit_cost || 0),
+      0,
+    );
+    const newTotalArs = currency === "ARS" ? newTotal : newTotal * rate;
+
+    const { error: updateError } = await supabase
+      .from("purchases")
+      .update({
+        provider_id: Number(form.provider_id),
+        purchase_date: form.purchase_date,
+        currency,
+        total_amount: newTotal,
+        total_amount_ars: newTotalArs,
+        fx_rate_used: currency === "ARS" ? null : rate,
+        notes: form.notes || null,
+      })
+      .eq("id", editingPurchaseId);
+
+    if (updateError) {
+      toast.error("No se pudo actualizar la compra", {
+        description: updateError.message,
+      });
+      return;
+    }
+
+    toast.success("Compra actualizada");
+    setEditingPurchaseId(null);
+    setEditingPurchase(null);
+    setCreateDialogOpen(false);
 
     await loadPurchases();
   };
@@ -620,78 +915,7 @@ const PurchasesConfig = () => {
     const { currency, rate } = pendingSavePayload || {};
     setPendingSavePayload(null);
 
-    const paymentRows = payments
-      .filter(
-        (payment) => payment.account_id && Number(payment.amount || 0) > 0,
-      )
-      .map((payment) => {
-        const account = displayAccounts.find(
-          (item) => String(item.id) === String(payment.account_id || ""),
-        );
-        const paymentAmount = Number(payment.amount || 0);
-        const paymentCurrency = account?.currency || currency;
-        const paymentRate = getEffectiveRateForCurrency(
-          paymentCurrency,
-          form.rate_mode,
-          form.manual_fx_rate,
-          fxRate,
-          usdtRate,
-        );
-        return {
-          account_id: Number(payment.account_id),
-          payment_method_id: null,
-          amount: paymentAmount,
-          currency: paymentCurrency,
-          amount_ars:
-            paymentCurrency === "ARS"
-              ? paymentAmount
-              : paymentAmount * paymentRate,
-          fx_rate_used: paymentCurrency === "ARS" ? null : paymentRate,
-        };
-      });
-
-    const payloadItems = items.map((item) => ({
-      variant_id: item.variant_id,
-      quantity: Number(item.quantity || 0),
-      unit_cost: Number(item.unit_cost || 0),
-      identifiers: isSerialTrackedVariant(item.variant)
-        ? parseIdentifiers(item.identifiersText)
-        : [],
-    }));
-
-    const { error } = await supabase.rpc(
-      "create_purchase_with_inventory_units",
-      {
-        p_provider_id: Number(form.provider_id),
-        p_purchase_date: form.purchase_date,
-        p_currency: currency,
-        p_total_amount: totalAmount,
-        p_total_amount_ars: totalAmountArs,
-        p_fx_rate_used: currency === "ARS" ? null : rate,
-        p_notes: form.notes || null,
-        p_items: payloadItems,
-        p_payments: paymentRows,
-      },
-    );
-
-    if (error) {
-      toast.error("No se pudo registrar la compra", {
-        description: error.message,
-      });
-      return;
-    }
-
-    toast.success("Compra registrada (incluye reingreso de equipo/s vendido/s)");
-    setForm((f) => ({
-      ...f,
-      notes: "",
-      rate_mode: "system",
-      manual_fx_rate: "",
-    }));
-    setItems([]);
-    setPayments([{ account_id: "", amount: "" }]);
-
-    await loadPurchases();
+    await handleSaveCreate(currency, rate);
   };
 
   const openPurchaseDetail = async (purchase) => {
@@ -799,7 +1023,7 @@ const PurchasesConfig = () => {
           .from("inventory_units")
           .select("id, identifier_value")
           .eq("purchase_item_id", item.id)
-          .eq("status", "available");
+          .in("status", ["available", "reentered"]);
         const entered = serials || [];
         return {
           ...item,
@@ -811,6 +1035,87 @@ const PurchasesConfig = () => {
 
     setCompleteItems(itemsWithSerials);
     setCompleteLoading(false);
+  };
+
+  const openCreateDialog = () => {
+    setEditingPurchaseId(null);
+    setEditingPurchase(null);
+    setForm({
+      provider_id: "",
+      purchase_date: new Date().toISOString().slice(0, 10),
+      currency: "ARS",
+      notes: "",
+      rate_mode: "system",
+      manual_fx_rate: "",
+    });
+    setItems([]);
+    setPayments([{ account_id: "", amount: "" }]);
+    setSearchVariant("");
+    setCreateDialogOpen(true);
+  };
+
+  const openEditDialog = async (purchase) => {
+    if (!purchase?.id) return;
+
+    const { data: purchaseItems, error } = await supabase
+      .from("purchase_items")
+      .select(
+        "id, variant_id, quantity, unit_cost, product_variants(id, variant_name, color, storage, ram, products(name, inventory_tracking_mode))",
+      )
+      .eq("purchase_id", purchase.id);
+
+    if (error) {
+      toast.error("No se pudieron cargar los items", {
+        description: error.message,
+      });
+      return;
+    }
+
+    const itemsWithSerials = await Promise.all(
+      (purchaseItems || []).map(async (pi) => {
+        const isSerial =
+          pi.product_variants?.products?.inventory_tracking_mode === "serial";
+        if (!isSerial) {
+          return { ...pi, identifiersText: "" };
+        }
+        const { data: serials } = await supabase
+          .from("inventory_units")
+          .select("identifier_value")
+          .eq("purchase_item_id", pi.id)
+          .in("status", ["available", "reentered"]);
+        const identifiers = (serials || []).map((s) => s.identifier_value);
+        return {
+          ...pi,
+          identifiersText: identifiers.join("\n"),
+        };
+      }),
+    );
+
+    setForm({
+      provider_id: String(purchase.provider_id),
+      purchase_date: purchase.purchase_date,
+      currency: purchase.currency,
+      notes: purchase.notes || "",
+      rate_mode: purchase.fx_rate_used ? "system" : "manual",
+      manual_fx_rate: "",
+    });
+
+    setItems(
+      itemsWithSerials.map((pi) => ({
+        variant_id: pi.variant_id,
+        variant: pi.product_variants,
+        quantity: pi.quantity,
+        unit_cost: pi.unit_cost,
+        identifiersText: pi.identifiersText,
+        _purchaseItemId: pi.id,
+      })),
+    );
+
+    setPayments([{ account_id: "", amount: "" }]);
+    setSearchVariant("");
+    setEditingPurchaseId(purchase.id);
+    setEditingPurchase(purchase);
+    setCreateDialogOpen(true);
   };
 
   const completeTotalPaid = useMemo(() => {
@@ -1022,7 +1327,7 @@ const PurchasesConfig = () => {
   });
 
   return (
-    <div className="mt-6 space-y-6">
+    <div className="@container/main flex flex-1 flex-col gap-4 py-6">
       <div>
         <div className="space-y-4">
           <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
@@ -1097,7 +1402,11 @@ const PurchasesConfig = () => {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="flex justify-end">
+              <div className="flex justify-end gap-2">
+                <Button onClick={openCreateDialog}>
+                  <IconPlus className="h-4 w-4" />
+                  Nueva compra
+                </Button>
                 <Button
                   onClick={loadPurchases}
                   disabled={loading}
@@ -1138,7 +1447,7 @@ const PurchasesConfig = () => {
                           ? formatUSDT(p.total_amount)
                           : formatARS(p.total_amount)}
                     </TableCell>
-                    <TableCell>{p.notes || "-"}</TableCell>
+                    <TableCell className="max-w-[180px] truncate" title={p.notes || ""}>{p.notes || "-"}</TableCell>
                     <TableCell className="text-right">
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
@@ -1153,6 +1462,16 @@ const PurchasesConfig = () => {
                         <DropdownMenuContent align="end" className="w-44">
                           <DropdownMenuLabel>Acciones</DropdownMenuLabel>
                           <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            disabled={p.status === "cancelled"}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              openEditDialog(p);
+                            }}
+                          >
+                            <IconEdit className="mr-2 h-4 w-4" />
+                            Editar
+                          </DropdownMenuItem>
                           <DropdownMenuItem
                             disabled={p.status === "cancelled"}
                             onClick={(event) => {
@@ -1196,439 +1515,476 @@ const PurchasesConfig = () => {
           </div>
         </div>
       </div>
-      <Card>
-        <CardHeader>
-          <CardTitle>Registrar compra</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid gap-3 md:grid-cols-5">
-            <div className="grid gap-1">
-              <Label
-                htmlFor="purchase-date"
-                className="text-xs text-muted-foreground"
-              >
-                Fecha
-              </Label>
-              <Input
-                id="purchase-date"
-                type="date"
-                value={form.purchase_date}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, purchase_date: e.target.value }))
-                }
-              />
-            </div>
-            <div className="grid gap-1">
-              <Label
-                htmlFor="purchase-provider"
-                className="text-xs text-muted-foreground"
-              >
-                Proveedor
-              </Label>
-              <Select
-                value={form.provider_id}
-                onValueChange={(value) =>
-                  setForm((f) => ({ ...f, provider_id: value }))
-                }
-              >
-                <SelectTrigger id="purchase-provider">
-                  <SelectValue placeholder="Proveedor" />
-                </SelectTrigger>
-                <SelectContent className="z-[9999]">
-                  {providers.map((p) => (
-                    <SelectItem key={p.id} value={String(p.id)}>
-                      {p.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="grid gap-1">
-              <Label
-                htmlFor="purchase-currency"
-                className="text-xs text-muted-foreground"
-              >
-                Moneda
-              </Label>
-              <Select
-                value={form.currency}
-                onValueChange={(value) =>
-                  setForm((f) => ({ ...f, currency: value }))
-                }
-              >
-                <SelectTrigger id="purchase-currency">
-                  <SelectValue placeholder="Moneda" />
-                </SelectTrigger>
-                <SelectContent className="z-[9999]">
-                  <SelectItem value="ARS">ARS</SelectItem>
-                  <SelectItem value="USD">USD</SelectItem>
-                  <SelectItem value="USDT">USDT</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="grid gap-1">
-              <Label
-                htmlFor="purchase-total"
-                className="text-xs text-muted-foreground"
-              >
-                Total
-              </Label>
-              <Input
-                id="purchase-total"
-                placeholder="Total"
-                value={formatByCurrency(form.currency, totalAmount)}
-                readOnly
-              />
-            </div>
-            <div className="grid gap-1">
-              <Label
-                htmlFor="purchase-paid"
-                className="text-xs text-muted-foreground"
-              >
-                Pagado
-              </Label>
-              <Input
-                id="purchase-paid"
-                value={totalPaid > 0 ? formatARS(totalPaid) : "Sin pagos"}
-                readOnly
-              />
-            </div>
-          </div>
+      <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
+        <DialogContent className="!w-[80vw] !max-w-[90vw] max-h-[85svh] overflow-y-auto rounded-2xl p-4 sm:p-6">
+          <DialogHeader>
+            <DialogTitle>
+              {editingPurchaseId
+                ? `Editar compra #${editingPurchaseId}`
+                : "Registrar compra"}
+            </DialogTitle>
+          </DialogHeader>
 
-          <div className="relative">
-            <Input
-              placeholder="Buscar producto/variante..."
-              value={searchVariant}
-              onFocus={() => setFocusVariant(true)}
-              onBlur={() => setTimeout(() => setFocusVariant(false), 200)}
-              onChange={(e) => setSearchVariant(e.target.value)}
-            />
-            {focusVariant && searchVariant && (
-              <div className="absolute z-[50] mt-1 w-full rounded-md border bg-background shadow">
-                <div className="max-h-64 overflow-y-auto">
-                  {filteredVariants.length > 0 ? (
-                    filteredVariants.slice(0, 40).map((v) => (
-                      <button
-                        type="button"
-                        key={v.id}
-                        onClick={() => handleAddItem(v)}
-                        className="w-full text-left px-3 py-2 hover:bg-muted"
-                      >
-                        <div className="font-medium">
-                          {v.products?.name} {v.variant_name} {v.color}
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          {isSerialTrackedVariant(v)
-                            ? "Serializado: requiere IMEI/SN por unidad"
-                            : "Por cantidad"}
-                        </div>
-                      </button>
-                    ))
-                  ) : (
-                    <div className="px-3 py-2 text-sm text-muted-foreground">
-                      Sin coincidencias
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="rounded-md border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Producto</TableHead>
-                  <TableHead>Cantidad</TableHead>
-                  <TableHead>Costo unit.</TableHead>
-                  <TableHead>Subtotal</TableHead>
-                  <TableHead></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {items.map((item) => (
-                  <TableRow key={item.variant_id}>
-                    <TableCell>
-                      {item.variant?.products?.name}{" "}
-                      {item.variant?.variant_name} {item.variant?.color}
-                      <div className="mt-1 text-xs text-muted-foreground">
-                        {isSerialTrackedVariant(item.variant)
-                          ? "Serializado"
-                          : "Por cantidad"}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Input
-                        type="number"
-                        value={item.quantity}
-                        onChange={(e) =>
-                          handleUpdateItem(
-                            item.variant_id,
-                            "quantity",
-                            e.target.value,
-                          )
-                        }
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <Input
-                        type="number"
-                        step="0.01"
-                        value={item.unit_cost}
-                        onChange={(e) =>
-                          handleUpdateItem(
-                            item.variant_id,
-                            "unit_cost",
-                            e.target.value,
-                          )
-                        }
-                      />
-                    </TableCell>
-                    <TableCell>
-                      {form.currency === "USD"
-                        ? `USD ${(Number(item.quantity || 0) * Number(item.unit_cost || 0)).toFixed(2)}`
-                        : form.currency === "USDT"
-                          ? formatUSDT(
-                              Number(item.quantity || 0) *
-                                Number(item.unit_cost || 0),
-                            )
-                          : formatARS(
-                              Number(item.quantity || 0) *
-                                Number(item.unit_cost || 0),
-                            )}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleRemoveItem(item.variant_id)}
-                      >
-                        Quitar
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-                {items
-                  .filter((item) => isSerialTrackedVariant(item.variant))
-                  .map((item) => (
-                    <TableRow key={`serials-${item.variant_id}`}>
-                      <TableCell colSpan={5} className="bg-muted/20">
-                        <div className="grid gap-2">
-                          <Label>IMEI/SN</Label>
-                          <Textarea
-                            placeholder={`Carga ${item.quantity || 0} IMEI/SN, uno por linea`}
-                            value={item.identifiersText || ""}
-                            onChange={(e) =>
-                              handleUpdateItem(
-                                item.variant_id,
-                                "identifiersText",
-                                e.target.value,
-                              )
-                            }
-                          />
-                          <div className="text-xs text-muted-foreground">
-                            Cargados:{" "}
-                            {parseIdentifiers(item.identifiersText).length} /{" "}
-                            {Number(item.quantity || 0)}
-                          </div>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                {items.length === 0 && (
-                  <TableRow>
-                    <TableCell
-                      colSpan={5}
-                      className="text-center text-muted-foreground"
-                    >
-                      Agrega productos a la compra.
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          </div>
-
-          <div className="grid gap-1">
-            <Label
-              htmlFor="purchase-notes"
-              className="text-xs text-muted-foreground"
-            >
-              Notas
-            </Label>
-            <Textarea
-              id="purchase-notes"
-              placeholder="Notas"
-              value={form.notes}
-              onChange={(e) =>
-                setForm((f) => ({ ...f, notes: e.target.value }))
-              }
-            />
-          </div>
-
-          <div className="grid gap-3 rounded-md border p-4 md:grid-cols-3">
-            <div className="grid gap-1">
-              <Label className="text-xs text-muted-foreground">
-                Cotizacion
-              </Label>
-              <Select
-                value={form.rate_mode}
-                onValueChange={(value) =>
-                  setForm((current) => ({
-                    ...current,
-                    rate_mode: value,
-                    manual_fx_rate:
-                      value === "manual" ? current.manual_fx_rate : "",
-                  }))
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Cotizacion" />
-                </SelectTrigger>
-                <SelectContent className="z-[9999]">
-                  <SelectItem value="system">Cotizacion del sistema</SelectItem>
-                  <SelectItem value="manual">Cotizacion manual</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            {form.rate_mode === "manual" && (
+          <div className="space-y-4">
+            <div className="grid gap-3 md:grid-cols-5">
               <div className="grid gap-1">
-                <Label className="text-xs text-muted-foreground">
-                  1 USD/USDT = ? ARS
+                <Label
+                  htmlFor="purchase-date"
+                  className="text-xs text-muted-foreground"
+                >
+                  Fecha
                 </Label>
                 <Input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  placeholder="Cotizacion manual"
-                  value={form.manual_fx_rate}
+                  id="purchase-date"
+                  type="date"
+                  value={form.purchase_date}
                   onChange={(e) =>
-                    setForm((current) => ({
-                      ...current,
-                      manual_fx_rate: e.target.value,
-                    }))
+                    setForm((f) => ({ ...f, purchase_date: e.target.value }))
                   }
                 />
               </div>
-            )}
-            <div className="grid gap-1">
-              <Label className="text-xs text-muted-foreground">
-                Total equiv. ARS
-              </Label>
+              <div className="grid gap-1">
+                <Label
+                  htmlFor="purchase-provider"
+                  className="text-xs text-muted-foreground"
+                >
+                  Proveedor
+                </Label>
+                <Select
+                  value={form.provider_id}
+                  onValueChange={(value) =>
+                    setForm((f) => ({ ...f, provider_id: value }))
+                  }
+                >
+                  <SelectTrigger id="purchase-provider">
+                    <SelectValue placeholder="Proveedor" />
+                  </SelectTrigger>
+                  <SelectContent className="z-[9999]">
+                    {providers.map((p) => (
+                      <SelectItem key={p.id} value={String(p.id)}>
+                        {p.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid gap-1">
+                <Label
+                  htmlFor="purchase-currency"
+                  className="text-xs text-muted-foreground"
+                >
+                  Moneda
+                </Label>
+                <Select
+                  value={form.currency}
+                  onValueChange={(value) =>
+                    setForm((f) => ({ ...f, currency: value }))
+                  }
+                  disabled={
+                    editingPurchaseId &&
+                    editingPurchase?.purchase_payments?.length > 0
+                  }
+                >
+                  <SelectTrigger id="purchase-currency">
+                    <SelectValue placeholder="Moneda" />
+                  </SelectTrigger>
+                  <SelectContent className="z-[9999]">
+                    <SelectItem value="ARS">ARS</SelectItem>
+                    <SelectItem value="USD">USD</SelectItem>
+                    <SelectItem value="USDT">USDT</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid gap-1">
+                <Label
+                  htmlFor="purchase-total"
+                  className="text-xs text-muted-foreground"
+                >
+                  Total
+                </Label>
+                <Input
+                  id="purchase-total"
+                  placeholder="Total"
+                  value={formatByCurrency(form.currency, totalAmount)}
+                  readOnly
+                />
+              </div>
+              <div className="grid gap-1">
+                <Label
+                  htmlFor="purchase-paid"
+                  className="text-xs text-muted-foreground"
+                >
+                  Pagado
+                </Label>
+                <Input
+                  id="purchase-paid"
+                  value={totalPaid > 0 ? formatARS(totalPaid) : "Sin pagos"}
+                  readOnly
+                />
+              </div>
+            </div>
+
+            <div className="relative">
               <Input
-                value={
-                  Number.isFinite(totalAmountArs)
-                    ? formatARS(totalAmountArs)
-                    : "-"
+                placeholder="Buscar producto/variante..."
+                value={searchVariant}
+                onFocus={() => setFocusVariant(true)}
+                onBlur={() => setTimeout(() => setFocusVariant(false), 200)}
+                onChange={(e) => setSearchVariant(e.target.value)}
+              />
+              {focusVariant && searchVariant && (
+                <div className="absolute z-[50] mt-1 w-full rounded-md border bg-background shadow">
+                  <div className="max-h-64 overflow-y-auto">
+                    {filteredVariants.length > 0 ? (
+                      filteredVariants.slice(0, 40).map((v) => (
+                        <button
+                          type="button"
+                          key={v.id}
+                          onClick={() => handleAddItem(v)}
+                          className="w-full text-left px-3 py-2 hover:bg-muted"
+                        >
+                          <div className="font-medium">
+                            {v.products?.name} {v.variant_name} {v.color}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {isSerialTrackedVariant(v)
+                              ? "Serializado: requiere IMEI/SN por unidad"
+                              : "Por cantidad"}
+                          </div>
+                        </button>
+                      ))
+                    ) : (
+                      <div className="px-3 py-2 text-sm text-muted-foreground">
+                        Sin coincidencias
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-md border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Producto</TableHead>
+                    <TableHead>Cantidad</TableHead>
+                    <TableHead>Costo unit.</TableHead>
+                    <TableHead>Subtotal</TableHead>
+                    <TableHead></TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {items.map((item) => (
+                    <TableRow key={item.variant_id}>
+                      <TableCell>
+                        {item.variant?.products?.name}{" "}
+                        {item.variant?.variant_name} {item.variant?.color}
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          {isSerialTrackedVariant(item.variant)
+                            ? "Serializado"
+                            : "Por cantidad"}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Input
+                          type="number"
+                          value={item.quantity}
+                          onChange={(e) =>
+                            handleUpdateItem(
+                              item.variant_id,
+                              "quantity",
+                              e.target.value,
+                            )
+                          }
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          value={item.unit_cost}
+                          onChange={(e) =>
+                            handleUpdateItem(
+                              item.variant_id,
+                              "unit_cost",
+                              e.target.value,
+                            )
+                          }
+                        />
+                      </TableCell>
+                      <TableCell>
+                        {form.currency === "USD"
+                          ? `USD ${(Number(item.quantity || 0) * Number(item.unit_cost || 0)).toFixed(2)}`
+                          : form.currency === "USDT"
+                            ? formatUSDT(
+                                Number(item.quantity || 0) *
+                                  Number(item.unit_cost || 0),
+                              )
+                            : formatARS(
+                                Number(item.quantity || 0) *
+                                  Number(item.unit_cost || 0),
+                              )}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleRemoveItem(item.variant_id)}
+                        >
+                          Quitar
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {items
+                    .filter((item) => isSerialTrackedVariant(item.variant))
+                    .map((item) => (
+                      <TableRow key={`serials-${item.variant_id}`}>
+                        <TableCell colSpan={5} className="bg-muted/20">
+                          <div className="grid gap-2">
+                            <Label>IMEI/SN</Label>
+                            <Textarea
+                              placeholder={`Carga ${item.quantity || 0} IMEI/SN, uno por linea`}
+                              value={item.identifiersText || ""}
+                              onChange={(e) =>
+                                handleUpdateItem(
+                                  item.variant_id,
+                                  "identifiersText",
+                                  e.target.value,
+                                )
+                              }
+                            />
+                            <div className="text-xs text-muted-foreground">
+                              {item._purchaseItemId &&
+                                parseIdentifiers(item.identifiersText).length >
+                                  0 && (
+                                  <span className="text-emerald-600">
+                                    {parseIdentifiers(item.identifiersText)
+                                      .length}{" "}
+                                    IMEIs previos —{" "}
+                                  </span>
+                                )}
+                              Cargados:{" "}
+                              {parseIdentifiers(item.identifiersText).length} /{" "}
+                              {Number(item.quantity || 0)}
+                            </div>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  {items.length === 0 && (
+                    <TableRow>
+                      <TableCell
+                        colSpan={5}
+                        className="text-center text-muted-foreground"
+                      >
+                        Agrega productos a la compra.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+
+            <div className="grid gap-1">
+              <Label
+                htmlFor="purchase-notes"
+                className="text-xs text-muted-foreground"
+              >
+                Notas
+              </Label>
+              <Textarea
+                id="purchase-notes"
+                placeholder="Notas"
+                value={form.notes}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, notes: e.target.value }))
                 }
-                readOnly
               />
             </div>
-          </div>
 
-          <div className="space-y-3 rounded-md border p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h4 className="text-sm font-medium">Pagos de la compra</h4>
-                <p className="text-xs text-muted-foreground">
-                  Opcional. Podes agregar pagos ahora o completarlos despues
-                  desde el historial.
-                </p>
+            <div className="grid gap-3 rounded-md border p-4 md:grid-cols-3">
+              <div className="grid gap-1">
+                <Label className="text-xs text-muted-foreground">
+                  Cotizacion
+                </Label>
+                <Select
+                  value={form.rate_mode}
+                  onValueChange={(value) =>
+                    setForm((current) => ({
+                      ...current,
+                      rate_mode: value,
+                      manual_fx_rate:
+                        value === "manual" ? current.manual_fx_rate : "",
+                    }))
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Cotizacion" />
+                  </SelectTrigger>
+                  <SelectContent className="z-[9999]">
+                    <SelectItem value="system">
+                      Cotizacion del sistema
+                    </SelectItem>
+                    <SelectItem value="manual">Cotizacion manual</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={handleAddPayment}
-              >
-                <IconPlus className="h-4 w-4" />
-                Agregar pago
-              </Button>
-            </div>
-            {payments.filter((p) => p.account_id || p.amount).length === 0 && (
-              <div className="text-xs text-muted-foreground italic">
-                Sin pagos registrados. Se podran agregar despues.
-              </div>
-            )}
-            {payments.map((payment, index) => (
-              <div
-                key={index}
-                className="space-y-3 rounded-md border bg-muted/40 p-3"
-              >
-                <div className="flex items-center gap-2">
-                  <Select
-                    value={payment.account_id}
-                    onValueChange={(value) =>
-                      handleUpdatePayment(index, "account_id", value)
-                    }
-                  >
-                    <SelectTrigger className="flex-1">
-                      <SelectValue placeholder="Cuenta..." />
-                    </SelectTrigger>
-                    <SelectContent className="z-[9999]">
-                      {displayAccounts.length === 0 && (
-                        <SelectItem value="none" disabled>
-                          Sin cuentas disponibles
-                        </SelectItem>
-                      )}
-                      {displayAccounts.map((acc) => (
-                        <SelectItem key={acc.id} value={String(acc.id)}>
-                          {acc.name} ({acc.currency})
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {payments.length > 1 && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      onClick={() => handleRemovePayment(index)}
-                    >
-                      <IconTrash className="h-4 w-4" />
-                    </Button>
-                  )}
-                </div>
-                <div className="flex items-end gap-2">
+              {form.rate_mode === "manual" && (
+                <div className="grid gap-1">
+                  <Label className="text-xs text-muted-foreground">
+                    1 USD/USDT = ? ARS
+                  </Label>
                   <Input
-                    className="flex-1"
                     type="number"
                     step="0.01"
                     min="0"
-                    placeholder={`Monto (${displayAccounts.find((acc) => String(acc.id) === String(payment.account_id || ""))?.currency || "ARS"})`}
-                    value={payment.amount}
+                    placeholder="Cotizacion manual"
+                    value={form.manual_fx_rate}
                     onChange={(e) =>
-                      handleUpdatePayment(index, "amount", e.target.value)
+                      setForm((current) => ({
+                        ...current,
+                        manual_fx_rate: e.target.value,
+                      }))
                     }
                   />
                 </div>
-                <div className="text-xs text-muted-foreground">
-                  Equivale a{" "}
-                  {formatARS(
-                    convertAmountToARS(
-                      payment.amount,
-                      displayAccounts.find(
-                        (acc) =>
-                          String(acc.id) === String(payment.account_id || ""),
-                      )?.currency || "ARS",
-                      form.rate_mode === "manual"
-                        ? resolveManualRate("USD", form.manual_fx_rate)
-                        : fxRate,
-                      form.rate_mode === "manual"
-                        ? resolveManualRate("USDT", form.manual_fx_rate)
-                        : usdtRate,
-                    ),
-                  )}
-                </div>
+              )}
+              <div className="grid gap-1">
+                <Label className="text-xs text-muted-foreground">
+                  Total equiv. ARS
+                </Label>
+                <Input
+                  value={
+                    Number.isFinite(totalAmountArs)
+                      ? formatARS(totalAmountArs)
+                      : "-"
+                  }
+                  readOnly
+                />
               </div>
-            ))}
-          </div>
+            </div>
 
-          <Button onClick={handleSave} disabled={reentryChecking}>
-            {reentryChecking ? "Verificando IMEIs..." : "Guardar compra"}
-          </Button>
-        </CardContent>
-      </Card>
+            {!editingPurchaseId && (
+              <div className="space-y-3 rounded-md border p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="text-sm font-medium">Pagos de la compra</h4>
+                    <p className="text-xs text-muted-foreground">
+                      Opcional. Podes agregar pagos ahora o completarlos despues
+                      desde el historial.
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleAddPayment}
+                  >
+                    <IconPlus className="h-4 w-4" />
+                    Agregar pago
+                  </Button>
+                </div>
+                {payments.filter((p) => p.account_id || p.amount).length ===
+                  0 && (
+                  <div className="text-xs text-muted-foreground italic">
+                    Sin pagos registrados. Se podran agregar despues.
+                  </div>
+                )}
+                {payments.map((payment, index) => (
+                  <div
+                    key={index}
+                    className="space-y-3 rounded-md border bg-muted/40 p-3"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Select
+                        value={payment.account_id}
+                        onValueChange={(value) =>
+                          handleUpdatePayment(index, "account_id", value)
+                        }
+                      >
+                        <SelectTrigger className="flex-1">
+                          <SelectValue placeholder="Cuenta..." />
+                        </SelectTrigger>
+                        <SelectContent className="z-[9999]">
+                          {displayAccounts.length === 0 && (
+                            <SelectItem value="none" disabled>
+                              Sin cuentas disponibles
+                            </SelectItem>
+                          )}
+                          {displayAccounts.map((acc) => (
+                            <SelectItem key={acc.id} value={String(acc.id)}>
+                              {acc.name} ({acc.currency})
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {payments.length > 1 && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          onClick={() => handleRemovePayment(index)}
+                        >
+                          <IconTrash className="h-4 w-4" />
+                        </Button>
+                      )}
+                    </div>
+                    <div className="flex items-end gap-2">
+                      <Input
+                        className="flex-1"
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        placeholder={`Monto (${displayAccounts.find((acc) => String(acc.id) === String(payment.account_id || ""))?.currency || "ARS"})`}
+                        value={payment.amount}
+                        onChange={(e) =>
+                          handleUpdatePayment(index, "amount", e.target.value)
+                        }
+                      />
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      Equivale a{" "}
+                      {formatARS(
+                        convertAmountToARS(
+                          payment.amount,
+                          displayAccounts.find(
+                            (acc) =>
+                              String(acc.id) ===
+                              String(payment.account_id || ""),
+                          )?.currency || "ARS",
+                          form.rate_mode === "manual"
+                            ? resolveManualRate("USD", form.manual_fx_rate)
+                            : fxRate,
+                          form.rate_mode === "manual"
+                            ? resolveManualRate("USDT", form.manual_fx_rate)
+                            : usdtRate,
+                        ),
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setCreateDialogOpen(false)}
+            >
+              Cancelar
+            </Button>
+            <Button onClick={handleSave} disabled={reentryChecking}>
+              {reentryChecking
+                ? "Verificando IMEIs..."
+                : editingPurchaseId
+                  ? "Guardar cambios"
+                  : "Guardar compra"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
         <DialogContent className="w-[90vw] sm:max-w-xl md:max-w-2xl max-h-[85svh] overflow-y-auto rounded-2xl p-4 sm:p-6">
