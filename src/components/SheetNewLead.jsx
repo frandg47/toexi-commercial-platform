@@ -118,7 +118,7 @@ export default function SheetNewLead({ open, onOpenChange, sellerId }) {
         .from("inventory_units")
         .select("id, identifier_value, identifier_normalized, status")
         .eq("variant_id", Number(reservationVariantId))
-        .eq("status", "available")
+        .in("status", ["available", "reentered"])
         .order("identifier_value");
       setInventoryUnits(data || []);
     };
