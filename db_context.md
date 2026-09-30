@@ -1,551 +1,952 @@
--- WARNING: This schema is for context only and is not meant to be run.
--- Table order and constraints may not be valid for execution.
+## Table `brands`
 
-CREATE TABLE public.brands (
-  id integer NOT NULL DEFAULT nextval('brands_id_seq'::regclass),
-  name text NOT NULL UNIQUE,
-  CONSTRAINT brands_pkey PRIMARY KEY (id)
-);
-CREATE TABLE public.categories (
-  id integer NOT NULL DEFAULT nextval('categories_id_seq'::regclass),
-  name text NOT NULL UNIQUE,
-  CONSTRAINT categories_pkey PRIMARY KEY (id)
-);
-CREATE TABLE public.payment_methods (
-  id integer NOT NULL DEFAULT nextval('payment_methods_id_seq'::regclass),
-  name text NOT NULL UNIQUE,
-  multiplier numeric NOT NULL DEFAULT 1,
-  is_active boolean NOT NULL DEFAULT true,
-  accreditation_delay_business_days integer NOT NULL DEFAULT 0 CHECK (accreditation_delay_business_days >= 0),
-  CONSTRAINT payment_methods_pkey PRIMARY KEY (id)
-);
-CREATE TABLE public.products (
-  id integer NOT NULL DEFAULT nextval('products_id_seq'::regclass),
-  name text NOT NULL,
-  brand_id integer,
-  category_id integer NOT NULL,
-  usd_price numeric,
-  commission_pct numeric,
-  commission_fixed numeric,
-  allow_backorder boolean NOT NULL DEFAULT false,
-  lead_time_label text,
-  active boolean NOT NULL DEFAULT true,
-  cover_image_url text,
-  created_at timestamp without time zone DEFAULT now(),
-  deposit_amount real,
-  inventory_tracking_mode text NOT NULL DEFAULT 'quantity'::text CHECK (inventory_tracking_mode = ANY (ARRAY['quantity'::text, 'serial'::text])),
-  CONSTRAINT products_pkey PRIMARY KEY (id),
-  CONSTRAINT products_brand_id_fkey FOREIGN KEY (brand_id) REFERENCES public.brands(id),
-  CONSTRAINT products_category_id_fkey FOREIGN KEY (category_id) REFERENCES public.categories(id)
-);
-CREATE TABLE public.fx_rates (
-  id integer NOT NULL DEFAULT nextval('fx_rates_id_seq'::regclass),
-  source text,
-  rate numeric NOT NULL,
-  is_active boolean NOT NULL DEFAULT true,
-  updated_at timestamp with time zone NOT NULL DEFAULT (now() AT TIME ZONE 'utc'::text),
-  created_at timestamp with time zone DEFAULT now(),
-  created_by text,
-  notes text,
-  CONSTRAINT fx_rates_pkey PRIMARY KEY (id)
-);
-CREATE TABLE public.commission_rules (
-  id integer NOT NULL DEFAULT nextval('commission_rules_id_seq'::regclass),
-  category_id integer,
-  brand_id integer,
-  commission_pct numeric,
-  commission_fixed numeric,
-  priority integer NOT NULL DEFAULT 100,
-  CONSTRAINT commission_rules_pkey PRIMARY KEY (id),
-  CONSTRAINT commission_rules_category_id_fkey FOREIGN KEY (category_id) REFERENCES public.categories(id),
-  CONSTRAINT commission_rules_brand_id_fkey FOREIGN KEY (brand_id) REFERENCES public.brands(id)
-);
-CREATE TABLE public.users (
-  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  name text,
-  dni text,
-  phone text,
-  email text,
-  role text CHECK (role = ANY (ARRAY['superadmin'::text, 'owner'::text, 'seller'::text])),
-  last_name text,
-  adress text,
-  is_active boolean DEFAULT false,
-  id_auth uuid DEFAULT gen_random_uuid() UNIQUE,
-  avatar_url text,
-  CONSTRAINT users_pkey PRIMARY KEY (id),
-  CONSTRAINT users_id_auth_fkey FOREIGN KEY (id_auth) REFERENCES auth.users(id)
-);
-CREATE TABLE public.payment_installments (
-  id integer NOT NULL DEFAULT nextval('payment_installments_id_seq'::regclass),
-  payment_method_id integer NOT NULL,
-  installments integer NOT NULL,
-  multiplier numeric NOT NULL,
-  description text,
-  CONSTRAINT payment_installments_pkey PRIMARY KEY (id),
-  CONSTRAINT payment_installments_payment_method_id_fkey FOREIGN KEY (payment_method_id) REFERENCES public.payment_methods(id)
-);
-CREATE TABLE public.product_variants (
-  id integer NOT NULL DEFAULT nextval('product_variants_id_seq'::regclass),
-  product_id integer NOT NULL,
-  storage text,
-  ram text,
-  color text,
-  sku text UNIQUE,
-  usd_price numeric,
-  stock integer NOT NULL DEFAULT 0,
-  image_url text,
-  active boolean NOT NULL DEFAULT true,
-  created_at timestamp without time zone DEFAULT now(),
-  updated_at timestamp without time zone DEFAULT now(),
-  variant_name text DEFAULT ''::text,
-  processor text,
-  graphics_card text,
-  screen_size text,
-  resolution text,
-  storage_type text,
-  storage_capacity text,
-  ram_type text,
-  ram_frequency text,
-  battery text,
-  weight text,
-  operating_system text,
-  camera_main text,
-  camera_front text,
-  wholesale_price numeric,
-  stock_defective integer NOT NULL DEFAULT 0,
-  cost_price_usd numeric,
-  CONSTRAINT product_variants_pkey PRIMARY KEY (id),
-  CONSTRAINT product_variants_product_id_fkey FOREIGN KEY (product_id) REFERENCES public.products(id)
-);
-CREATE TABLE public.user_roles (
-  id_auth uuid NOT NULL,
-  role text CHECK (role = ANY (ARRAY['superadmin'::text, 'owner'::text, 'seller'::text])),
-  CONSTRAINT user_roles_pkey PRIMARY KEY (id_auth)
-);
-CREATE TABLE public.customers (
-  id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  updated_at timestamp with time zone NOT NULL DEFAULT now(),
-  name text NOT NULL,
-  last_name text,
-  dni text UNIQUE,
-  phone text,
-  email text,
-  address text,
-  city text,
-  notes text,
-  is_active boolean NOT NULL DEFAULT true,
-  CONSTRAINT customers_pkey PRIMARY KEY (id)
-);
-CREATE TABLE public.leads (
-  id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  updated_at timestamp with time zone NOT NULL DEFAULT now(),
-  referred_by uuid NOT NULL,
-  customer_id integer,
-  appointment_datetime timestamp with time zone,
-  qr_code text UNIQUE,
-  status text DEFAULT 'pendiente'::text,
-  notes text,
-  sale_id integer UNIQUE,
-  interested_variants jsonb,
-  product_status character varying DEFAULT 'en espera'::character varying,
-  deposit_paid boolean NOT NULL DEFAULT false,
-  deposit_amount numeric NOT NULL DEFAULT 0,
-  deposit_currency text NOT NULL DEFAULT 'ARS'::text,
-  CONSTRAINT leads_pkey PRIMARY KEY (id),
-  CONSTRAINT leads_referred_by_fkey FOREIGN KEY (referred_by) REFERENCES public.user_roles(id_auth),
-  CONSTRAINT leads_customer_id_fkey FOREIGN KEY (customer_id) REFERENCES public.customers(id)
-);
-CREATE TABLE public.commission_payments (
-  id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
-  seller_id uuid NOT NULL,
-  period_start date NOT NULL,
-  period_end date NOT NULL,
-  total_amount numeric NOT NULL,
-  paid_at timestamp with time zone,
-  notes text,
-  CONSTRAINT commission_payments_pkey PRIMARY KEY (id),
-  CONSTRAINT commission_payments_seller_id_fkey FOREIGN KEY (seller_id) REFERENCES public.user_roles(id_auth)
-);
-CREATE TABLE public.sales (
-  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
-  customer_id integer,
-  seller_id uuid,
-  lead_id integer,
-  total_usd numeric,
-  total_ars numeric,
-  fx_rate_used numeric,
-  notes text,
-  sale_date timestamp without time zone DEFAULT now(),
-  status text DEFAULT '''vendido''::text'::text,
-  payments jsonb,
-  discount_type text,
-  discount_value numeric,
-  discount_amount numeric,
-  voided_at timestamp with time zone,
-  voided_by uuid,
-  void_reason text,
-  void_stock_bucket text CHECK (void_stock_bucket IS NULL OR (void_stock_bucket = ANY (ARRAY['available'::text, 'defective'::text]))),
-  sales_channel_id integer,
-  surcharge_type text,
-  surcharge_value numeric,
-  surcharge_amount numeric,
-  updated_at timestamp with time zone DEFAULT now(),
-  updated_by uuid,
-  updated_fields jsonb,
-  CONSTRAINT sales_pkey PRIMARY KEY (id),
-  CONSTRAINT sales_customer_id_fkey FOREIGN KEY (customer_id) REFERENCES public.customers(id),
-  CONSTRAINT sales_seller_id_fkey FOREIGN KEY (seller_id) REFERENCES public.user_roles(id_auth),
-  CONSTRAINT sales_lead_id_fkey FOREIGN KEY (lead_id) REFERENCES public.leads(id),
-  CONSTRAINT sales_sales_channel_id_fkey FOREIGN KEY (sales_channel_id) REFERENCES public.sales_channels(id),
-  CONSTRAINT sales_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES auth.users(id)
-);
-CREATE TABLE public.sale_items (
-  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
-  sale_id bigint,
-  variant_id integer,
-  product_name text,
-  variant_name text,
-  color text,
-  storage text,
-  ram text,
-  usd_price numeric,
-  quantity integer,
-  subtotal_usd numeric,
-  subtotal_ars numeric,
-  imei character varying DEFAULT NULL::character varying,
-  commission_pct numeric,
-  commission_fixed numeric,
-  cost_price_usd numeric,
-  is_gift boolean NOT NULL DEFAULT false,
-  CONSTRAINT sale_items_pkey PRIMARY KEY (id),
-  CONSTRAINT sale_items_sale_id_fkey FOREIGN KEY (sale_id) REFERENCES public.sales(id),
-  CONSTRAINT sale_items_variant_id_fkey FOREIGN KEY (variant_id) REFERENCES public.product_variants(id)
-);
-CREATE TABLE public.sale_payments (
-  id bigint NOT NULL DEFAULT nextval('sale_payments_id_seq'::regclass),
-  sale_id bigint NOT NULL,
-  method text CHECK (method = ANY (ARRAY['efectivo'::text, 'transferencia'::text, 'tarjeta'::text])),
-  amount_ars numeric NOT NULL,
-  amount_usd numeric,
-  reference text,
-  card_brand text,
-  installments integer,
-  created_at timestamp without time zone DEFAULT now(),
-  payment_method_id integer,
-  account_id bigint,
-  CONSTRAINT sale_payments_pkey PRIMARY KEY (id),
-  CONSTRAINT sale_payments_payment_method_fk FOREIGN KEY (payment_method_id) REFERENCES public.payment_methods(id),
-  CONSTRAINT sale_payments_sale_id_fkey FOREIGN KEY (sale_id) REFERENCES public.sales(id),
-  CONSTRAINT sale_payments_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id)
-);
-CREATE TABLE public.sale_item_imeis (
-  id integer NOT NULL DEFAULT nextval('sale_item_imeis_id_seq'::regclass),
-  sale_item_id integer NOT NULL,
-  imei text NOT NULL,
-  created_at timestamp without time zone DEFAULT now(),
-  inventory_unit_id bigint,
-  CONSTRAINT sale_item_imeis_pkey PRIMARY KEY (id),
-  CONSTRAINT sale_item_imeis_sale_item_id_fkey FOREIGN KEY (sale_item_id) REFERENCES public.sale_items(id),
-  CONSTRAINT sale_item_imeis_inventory_unit_id_fkey FOREIGN KEY (inventory_unit_id) REFERENCES public.inventory_units(id)
-);
-CREATE TABLE public.sales_channels (
-  id integer GENERATED ALWAYS AS IDENTITY NOT NULL,
-  name text NOT NULL UNIQUE,
-  description text,
-  is_active boolean NOT NULL DEFAULT true,
-  created_at timestamp with time zone DEFAULT now(),
-  CONSTRAINT sales_channels_pkey PRIMARY KEY (id)
-);
-CREATE TABLE public.accounts (
-  id bigint NOT NULL DEFAULT nextval('accounts_id_seq'::regclass),
-  name text NOT NULL,
-  currency text NOT NULL CHECK (currency = ANY (ARRAY['ARS'::text, 'USD'::text, 'USDT'::text])),
-  initial_balance numeric NOT NULL DEFAULT 0,
-  notes text,
-  include_in_balance boolean NOT NULL DEFAULT true,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  is_reference_capital boolean NOT NULL DEFAULT false,
-  is_caja_virtual boolean NOT NULL DEFAULT false,
-  CONSTRAINT accounts_pkey PRIMARY KEY (id)
-);
-CREATE TABLE public.fixed_expenses (
-  id bigint NOT NULL DEFAULT nextval('fixed_expenses_id_seq'::regclass),
-  name text NOT NULL,
-  amount numeric NOT NULL,
-  currency text NOT NULL CHECK (currency = ANY (ARRAY['ARS'::text, 'USD'::text, 'USDT'::text])),
-  account_id bigint,
-  category text,
-  due_day integer,
-  notes text,
-  is_active boolean NOT NULL DEFAULT true,
-  last_paid_at timestamp with time zone,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  CONSTRAINT fixed_expenses_pkey PRIMARY KEY (id),
-  CONSTRAINT fixed_expenses_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id)
-);
-CREATE TABLE public.expenses (
-  id bigint NOT NULL DEFAULT nextval('expenses_id_seq'::regclass),
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  expense_date date NOT NULL,
-  amount numeric NOT NULL,
-  currency text NOT NULL CHECK (currency = ANY (ARRAY['ARS'::text, 'USD'::text, 'USDT'::text])),
-  amount_ars numeric NOT NULL,
-  fx_rate_used numeric,
-  account_id bigint,
-  category text,
-  type text NOT NULL CHECK (type = ANY (ARRAY['fixed'::text, 'variable'::text])),
-  notes text,
-  fixed_expense_id bigint,
-  frequency_value integer,
-  frequency_unit text,
-  last_paid_at timestamp with time zone,
-  is_active boolean NOT NULL DEFAULT true,
-  CONSTRAINT expenses_pkey PRIMARY KEY (id),
-  CONSTRAINT expenses_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id),
-  CONSTRAINT expenses_fixed_expense_id_fkey FOREIGN KEY (fixed_expense_id) REFERENCES public.fixed_expenses(id)
-);
-CREATE TABLE public.providers (
-  id bigint NOT NULL DEFAULT nextval('providers_id_seq'::regclass),
-  name text NOT NULL,
-  contact_name text,
-  phone text,
-  email text,
-  address text,
-  city text,
-  notes text,
-  is_active boolean NOT NULL DEFAULT true,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  CONSTRAINT providers_pkey PRIMARY KEY (id)
-);
-CREATE TABLE public.purchases (
-  id bigint NOT NULL DEFAULT nextval('purchases_id_seq'::regclass),
-  provider_id bigint,
-  purchase_date date NOT NULL,
-  currency text NOT NULL CHECK (currency = ANY (ARRAY['ARS'::text, 'USD'::text, 'USDT'::text])),
-  total_amount numeric NOT NULL,
-  total_amount_ars numeric,
-  fx_rate_used numeric,
-  notes text,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  status text NOT NULL DEFAULT 'active'::text CHECK (status = ANY (ARRAY['active'::text, 'cancelled'::text])),
-  void_reason text,
-  voided_at timestamp with time zone,
-  CONSTRAINT purchases_pkey PRIMARY KEY (id),
-  CONSTRAINT purchases_provider_id_fkey FOREIGN KEY (provider_id) REFERENCES public.providers(id)
-);
-CREATE TABLE public.purchase_items (
-  id bigint NOT NULL DEFAULT nextval('purchase_items_id_seq'::regclass),
-  purchase_id bigint,
-  variant_id integer,
-  quantity integer NOT NULL,
-  unit_cost numeric NOT NULL,
-  subtotal numeric NOT NULL,
-  CONSTRAINT purchase_items_pkey PRIMARY KEY (id),
-  CONSTRAINT purchase_items_purchase_id_fkey FOREIGN KEY (purchase_id) REFERENCES public.purchases(id),
-  CONSTRAINT purchase_items_variant_id_fkey FOREIGN KEY (variant_id) REFERENCES public.product_variants(id)
-);
-CREATE TABLE public.finance_categories (
-  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
-  name text NOT NULL,
-  type text NOT NULL CHECK (type = ANY (ARRAY['expense'::text, 'income'::text])),
-  is_active boolean NOT NULL DEFAULT true,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  CONSTRAINT finance_categories_pkey PRIMARY KEY (id)
-);
-CREATE TABLE public.account_movements (
-  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  movement_date date NOT NULL DEFAULT CURRENT_DATE,
-  account_id bigint NOT NULL,
-  type text NOT NULL CHECK (type = ANY (ARRAY['income'::text, 'expense'::text, 'transfer'::text])),
-  amount numeric NOT NULL,
-  currency text NOT NULL CHECK (currency = ANY (ARRAY['ARS'::text, 'USD'::text, 'USDT'::text])),
-  amount_ars numeric,
-  fx_rate_used numeric,
-  related_table text,
-  related_id bigint,
-  notes text,
-  accreditation_status text NOT NULL DEFAULT 'credited'::text CHECK (accreditation_status = ANY (ARRAY['credited'::text, 'pending'::text])),
-  available_on date,
-  CONSTRAINT account_movements_pkey PRIMARY KEY (id),
-  CONSTRAINT account_movements_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id)
-);
-CREATE TABLE public.purchase_payments (
-  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
-  purchase_id bigint NOT NULL,
-  account_id bigint NOT NULL,
-  payment_method_id integer,
-  amount numeric NOT NULL,
-  currency text NOT NULL CHECK (currency = ANY (ARRAY['ARS'::text, 'USD'::text, 'USDT'::text])),
-  amount_ars numeric,
-  fx_rate_used numeric,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  notes text,
-  CONSTRAINT purchase_payments_pkey PRIMARY KEY (id),
-  CONSTRAINT purchase_payments_purchase_id_fkey FOREIGN KEY (purchase_id) REFERENCES public.purchases(id),
-  CONSTRAINT purchase_payments_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id),
-  CONSTRAINT purchase_payments_payment_method_id_fkey FOREIGN KEY (payment_method_id) REFERENCES public.payment_methods(id)
-);
-CREATE TABLE public.warranty_exchanges (
-  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
-  sale_id bigint NOT NULL,
-  sale_item_id bigint NOT NULL,
-  original_variant_id integer,
-  original_imei text,
-  quantity integer NOT NULL DEFAULT 1,
-  returned_stock_bucket text NOT NULL CHECK (returned_stock_bucket = ANY (ARRAY['available'::text, 'defective'::text])),
-  replacement_variant_id integer NOT NULL,
-  replacement_imei text,
-  reason text NOT NULL,
-  notes text,
-  status text NOT NULL DEFAULT 'completed'::text CHECK (status = ANY (ARRAY['pending'::text, 'completed'::text, 'cancelled'::text])),
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  created_by uuid DEFAULT auth.uid(),
-  price_difference_usd numeric NOT NULL DEFAULT 0,
-  settlement_type text NOT NULL DEFAULT 'none'::text CHECK (settlement_type = ANY (ARRAY['none'::text, 'customer_payment'::text, 'customer_refund'::text])),
-  settlement_account_id bigint,
-  settlement_payment_method_id integer,
-  settlement_currency text CHECK (settlement_currency IS NULL OR (settlement_currency = ANY (ARRAY['ARS'::text, 'USD'::text, 'USDT'::text]))),
-  settlement_amount numeric,
-  settlement_amount_ars numeric,
-  settlement_fx_rate_used numeric,
-  settlement_installments integer,
-  settlement_multiplier numeric,
-  store_credit_usd numeric NOT NULL DEFAULT 0,
-  store_credit_amount_ars numeric,
-  original_inventory_unit_id bigint,
-  CONSTRAINT warranty_exchanges_pkey PRIMARY KEY (id),
-  CONSTRAINT warranty_exchanges_sale_id_fkey FOREIGN KEY (sale_id) REFERENCES public.sales(id),
-  CONSTRAINT warranty_exchanges_sale_item_id_fkey FOREIGN KEY (sale_item_id) REFERENCES public.sale_items(id),
-  CONSTRAINT warranty_exchanges_original_variant_id_fkey FOREIGN KEY (original_variant_id) REFERENCES public.product_variants(id),
-  CONSTRAINT warranty_exchanges_replacement_variant_id_fkey FOREIGN KEY (replacement_variant_id) REFERENCES public.product_variants(id),
-  CONSTRAINT warranty_exchanges_settlement_account_id_fkey FOREIGN KEY (settlement_account_id) REFERENCES public.accounts(id),
-  CONSTRAINT warranty_exchanges_settlement_payment_method_id_fkey FOREIGN KEY (settlement_payment_method_id) REFERENCES public.payment_methods(id),
-  CONSTRAINT warranty_exchanges_original_inventory_unit_id_fkey FOREIGN KEY (original_inventory_unit_id) REFERENCES public.inventory_units(id)
-);
-CREATE TABLE public.aftersales_devices (
-  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
-  variant_id integer NOT NULL,
-  sale_id bigint,
-  warranty_exchange_id bigint,
-  source_type text NOT NULL CHECK (source_type = ANY (ARRAY['factory'::text, 'warranty'::text])),
-  imei text,
-  quantity integer NOT NULL DEFAULT 1,
-  status text NOT NULL DEFAULT 'defective_in_store'::text CHECK (status = ANY (ARRAY['defective_in_store'::text, 'in_repair'::text, 'repaired'::text])),
-  notes text,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  updated_at timestamp with time zone NOT NULL DEFAULT now(),
-  created_by uuid DEFAULT auth.uid(),
-  include_in_stock_cost_balance boolean NOT NULL DEFAULT false,
-  sold_sale_id bigint,
-  sold_at timestamp with time zone,
-  inventory_unit_id bigint,
-  CONSTRAINT aftersales_devices_pkey PRIMARY KEY (id),
-  CONSTRAINT aftersales_devices_variant_id_fkey FOREIGN KEY (variant_id) REFERENCES public.product_variants(id),
-  CONSTRAINT aftersales_devices_sale_id_fkey FOREIGN KEY (sale_id) REFERENCES public.sales(id),
-  CONSTRAINT aftersales_devices_warranty_exchange_id_fkey FOREIGN KEY (warranty_exchange_id) REFERENCES public.warranty_exchanges(id),
-  CONSTRAINT aftersales_devices_sold_sale_id_fkey FOREIGN KEY (sold_sale_id) REFERENCES public.sales(id),
-  CONSTRAINT aftersales_devices_inventory_unit_id_fkey FOREIGN KEY (inventory_unit_id) REFERENCES public.inventory_units(id)
-);
-CREATE TABLE public.warranty_exchange_items (
-  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
-  warranty_exchange_id bigint NOT NULL,
-  variant_id integer NOT NULL,
-  imei text,
-  quantity integer NOT NULL DEFAULT 1 CHECK (quantity > 0),
-  unit_price_usd numeric NOT NULL DEFAULT 0,
-  subtotal_usd numeric NOT NULL DEFAULT 0,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  inventory_unit_id bigint,
-  CONSTRAINT warranty_exchange_items_pkey PRIMARY KEY (id),
-  CONSTRAINT warranty_exchange_items_warranty_exchange_id_fkey FOREIGN KEY (warranty_exchange_id) REFERENCES public.warranty_exchanges(id),
-  CONSTRAINT warranty_exchange_items_variant_id_fkey FOREIGN KEY (variant_id) REFERENCES public.product_variants(id),
-  CONSTRAINT warranty_exchange_items_inventory_unit_id_fkey FOREIGN KEY (inventory_unit_id) REFERENCES public.inventory_units(id)
-);
-CREATE TABLE public.inventory_units (
-  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
-  variant_id integer NOT NULL,
-  purchase_id bigint,
-  purchase_item_id bigint,
-  sale_id bigint,
-  sale_item_id bigint,
-  warranty_exchange_id bigint,
-  identifier_value text NOT NULL,
-  identifier_normalized text DEFAULT NULLIF(lower(regexp_replace(btrim(COALESCE(identifier_value, ''::text)), '[^[:alnum:]]'::text, ''::text, 'g'::text)), ''::text),
-  status text NOT NULL DEFAULT 'available'::text CHECK (status = ANY (ARRAY['available'::text, 'reserved'::text, 'sold'::text, 'defective'::text, 'in_repair'::text, 'returned_available'::text, 'returned_defective'::text, 'warranty_hold'::text, 'voided'::text])),
-  received_at timestamp with time zone NOT NULL DEFAULT now(),
-  sold_at timestamp with time zone,
-  returned_at timestamp with time zone,
-  notes text,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  updated_at timestamp with time zone NOT NULL DEFAULT now(),
-  created_by uuid DEFAULT auth.uid(),
-  updated_by uuid,
-  CONSTRAINT inventory_units_pkey PRIMARY KEY (id),
-  CONSTRAINT inventory_units_variant_id_fkey FOREIGN KEY (variant_id) REFERENCES public.product_variants(id),
-  CONSTRAINT inventory_units_purchase_id_fkey FOREIGN KEY (purchase_id) REFERENCES public.purchases(id),
-  CONSTRAINT inventory_units_purchase_item_id_fkey FOREIGN KEY (purchase_item_id) REFERENCES public.purchase_items(id),
-  CONSTRAINT inventory_units_sale_id_fkey FOREIGN KEY (sale_id) REFERENCES public.sales(id),
-  CONSTRAINT inventory_units_sale_item_id_fkey FOREIGN KEY (sale_item_id) REFERENCES public.sale_items(id),
-  CONSTRAINT inventory_units_warranty_exchange_id_fkey FOREIGN KEY (warranty_exchange_id) REFERENCES public.warranty_exchanges(id)
-);
-CREATE TABLE public.inventory_unit_events (
-  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
-  inventory_unit_id bigint NOT NULL,
-  event_type text NOT NULL,
-  from_status text,
-  to_status text,
-  related_table text,
-  related_id bigint,
-  notes text,
-  payload jsonb NOT NULL DEFAULT '{}'::jsonb,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  created_by uuid DEFAULT auth.uid(),
-  CONSTRAINT inventory_unit_events_pkey PRIMARY KEY (id),
-  CONSTRAINT inventory_unit_events_inventory_unit_id_fkey FOREIGN KEY (inventory_unit_id) REFERENCES public.inventory_units(id)
-);
-CREATE TABLE public.cash_registers (
-  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
-  user_id uuid NOT NULL,
-  register_date date NOT NULL DEFAULT CURRENT_DATE,
-  status text NOT NULL DEFAULT 'open'::text CHECK (status = ANY (ARRAY['open'::text, 'closed'::text])),
-  currency text NOT NULL DEFAULT 'ARS'::text CHECK (currency = ANY (ARRAY['ARS'::text, 'USD'::text, 'USDT'::text])),
-  opening_amount numeric NOT NULL DEFAULT 0,
-  closed_amount numeric,
-  expected_amount numeric,
-  difference numeric,
-  opened_at timestamp with time zone NOT NULL DEFAULT now(),
-  closed_at timestamp with time zone,
-  distribution jsonb,
-  notes text,
-  created_at timestamp with time zone DEFAULT now(),
-  opening_amounts jsonb NOT NULL DEFAULT '[{"amount": 0, "currency": "ARS"}]'::jsonb,
-  closed_amounts jsonb,
-  CONSTRAINT cash_registers_pkey PRIMARY KEY (id),
-  CONSTRAINT cash_registers_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
-);
-CREATE TABLE public.cash_register_movements (
-  id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
-  cash_register_id bigint NOT NULL,
-  type text NOT NULL CHECK (type = ANY (ARRAY['opening'::text, 'sale_income'::text, 'expense'::text, 'withdrawal'::text, 'income'::text, 'transfer_in'::text, 'transfer_out'::text, 'closing'::text])),
-  amount numeric NOT NULL,
-  currency text NOT NULL DEFAULT 'ARS'::text,
-  related_table text,
-  related_id bigint,
-  notes text,
-  created_at timestamp with time zone DEFAULT now(),
-  created_by uuid,
-  payment_method_id integer,
-  payment_method_name text,
-  reference text,
-  multiplier numeric DEFAULT 1,
-  net_amount numeric,
-  accreditation_status text DEFAULT 'credited'::text CHECK (accreditation_status = ANY (ARRAY['credited'::text, 'pending'::text])),
-  available_on date,
-  sale_payment_id bigint,
-  CONSTRAINT cash_register_movements_pkey PRIMARY KEY (id),
-  CONSTRAINT cash_register_movements_register_fkey FOREIGN KEY (cash_register_id) REFERENCES public.cash_registers(id)
-);
+### Columns
+
+| Name | Type | Constraints |
+|------|------|-------------|
+| `id` | `int4` | Primary |
+| `name` | `text` |  Unique |
+
+## Table `categories`
+
+### Columns
+
+| Name | Type | Constraints |
+|------|------|-------------|
+| `id` | `int4` | Primary |
+| `name` | `text` |  Unique |
+
+## Table `payment_methods`
+
+### Columns
+
+| Name | Type | Constraints |
+|------|------|-------------|
+| `id` | `int4` | Primary |
+| `name` | `text` |  Unique |
+| `multiplier` | `numeric` |  |
+| `is_active` | `bool` |  |
+| `accreditation_delay_business_days` | `int4` |  |
+| `account_id` | `int8` |  Nullable |
+
+## Table `products`
+
+### Columns
+
+| Name | Type | Constraints |
+|------|------|-------------|
+| `id` | `int4` | Primary |
+| `name` | `text` |  |
+| `brand_id` | `int4` |  Nullable |
+| `category_id` | `int4` |  |
+| `usd_price` | `numeric` |  Nullable |
+| `commission_pct` | `numeric` |  Nullable |
+| `commission_fixed` | `numeric` |  Nullable |
+| `allow_backorder` | `bool` |  |
+| `lead_time_label` | `text` |  Nullable |
+| `active` | `bool` |  |
+| `cover_image_url` | `text` |  Nullable |
+| `created_at` | `timestamp` |  Nullable |
+| `deposit_amount` | `float4` |  Nullable |
+| `inventory_tracking_mode` | `text` |  |
+
+## Table `fx_rates`
+
+### Columns
+
+| Name | Type | Constraints |
+|------|------|-------------|
+| `id` | `int4` | Primary |
+| `source` | `text` |  Nullable |
+| `rate` | `numeric` |  |
+| `is_active` | `bool` |  |
+| `updated_at` | `timestamptz` |  |
+| `created_at` | `timestamptz` |  Nullable |
+| `created_by` | `text` |  Nullable |
+| `notes` | `text` |  Nullable |
+
+## Table `commission_rules`
+
+### Columns
+
+| Name | Type | Constraints |
+|------|------|-------------|
+| `id` | `int4` | Primary |
+| `category_id` | `int4` |  Nullable |
+| `brand_id` | `int4` |  Nullable |
+| `commission_pct` | `numeric` |  Nullable |
+| `commission_fixed` | `numeric` |  Nullable |
+| `priority` | `int4` |  |
+
+## Table `users`
+
+### Columns
+
+| Name | Type | Constraints |
+|------|------|-------------|
+| `id` | `int8` | Primary Identity |
+| `created_at` | `timestamptz` |  |
+| `name` | `text` |  Nullable |
+| `dni` | `text` |  Nullable |
+| `phone` | `text` |  Nullable |
+| `email` | `text` |  Nullable |
+| `role` | `text` |  Nullable |
+| `last_name` | `text` |  Nullable |
+| `adress` | `text` |  Nullable |
+| `is_active` | `bool` |  Nullable |
+| `id_auth` | `uuid` |  Nullable Unique |
+| `avatar_url` | `text` |  Nullable |
+
+## Table `payment_installments`
+
+### Columns
+
+| Name | Type | Constraints |
+|------|------|-------------|
+| `id` | `int4` | Primary |
+| `payment_method_id` | `int4` |  |
+| `installments` | `int4` |  |
+| `multiplier` | `numeric` |  |
+| `description` | `text` |  Nullable |
+
+## Table `product_variants`
+
+### Columns
+
+| Name | Type | Constraints |
+|------|------|-------------|
+| `id` | `int4` | Primary |
+| `product_id` | `int4` |  |
+| `storage` | `text` |  Nullable |
+| `ram` | `text` |  Nullable |
+| `color` | `text` |  Nullable |
+| `sku` | `text` |  Nullable Unique |
+| `usd_price` | `numeric` |  Nullable |
+| `stock` | `int4` |  |
+| `image_url` | `text` |  Nullable |
+| `active` | `bool` |  |
+| `created_at` | `timestamp` |  Nullable |
+| `updated_at` | `timestamp` |  Nullable |
+| `variant_name` | `text` |  Nullable |
+| `processor` | `text` |  Nullable |
+| `graphics_card` | `text` |  Nullable |
+| `screen_size` | `text` |  Nullable |
+| `resolution` | `text` |  Nullable |
+| `storage_type` | `text` |  Nullable |
+| `storage_capacity` | `text` |  Nullable |
+| `ram_type` | `text` |  Nullable |
+| `ram_frequency` | `text` |  Nullable |
+| `battery` | `text` |  Nullable |
+| `weight` | `text` |  Nullable |
+| `operating_system` | `text` |  Nullable |
+| `camera_main` | `text` |  Nullable |
+| `camera_front` | `text` |  Nullable |
+| `wholesale_price` | `numeric` |  Nullable |
+| `stock_defective` | `int4` |  |
+| `cost_price_usd` | `numeric` |  Nullable |
+
+## Table `user_roles`
+
+### Columns
+
+| Name | Type | Constraints |
+|------|------|-------------|
+| `id_auth` | `uuid` | Primary |
+| `role` | `text` |  Nullable |
+
+## Table `customers`
+
+### Columns
+
+| Name | Type | Constraints |
+|------|------|-------------|
+| `id` | `int4` | Primary Identity |
+| `created_at` | `timestamptz` |  |
+| `updated_at` | `timestamptz` |  |
+| `name` | `text` |  |
+| `last_name` | `text` |  Nullable |
+| `dni` | `text` |  Nullable Unique |
+| `phone` | `text` |  Nullable |
+| `email` | `text` |  Nullable |
+| `address` | `text` |  Nullable |
+| `city` | `text` |  Nullable |
+| `notes` | `text` |  Nullable |
+| `is_active` | `bool` |  |
+
+## Table `leads`
+
+### Columns
+
+| Name | Type | Constraints |
+|------|------|-------------|
+| `id` | `int4` | Primary Identity |
+| `created_at` | `timestamptz` |  |
+| `updated_at` | `timestamptz` |  |
+| `referred_by` | `uuid` |  |
+| `customer_id` | `int4` |  Nullable |
+| `appointment_datetime` | `timestamptz` |  Nullable |
+| `qr_code` | `text` |  Nullable Unique |
+| `status` | `text` |  Nullable |
+| `notes` | `text` |  Nullable |
+| `sale_id` | `int4` |  Nullable Unique |
+| `interested_variants` | `jsonb` |  Nullable |
+| `product_status` | `varchar` |  Nullable |
+| `deposit_paid` | `bool` |  |
+| `deposit_amount` | `numeric` |  |
+| `deposit_currency` | `text` |  |
+| `fulfillment_type` | `text` |  |
+| `reserved_variant_id` | `int4` |  Nullable |
+| `reservation_expires_at` | `timestamptz` |  Nullable |
+| `reserved_inventory_unit_id` | `int8` |  Nullable |
+
+## Table `commission_payments`
+
+### Columns
+
+| Name | Type | Constraints |
+|------|------|-------------|
+| `id` | `int4` | Primary Identity |
+| `seller_id` | `uuid` |  |
+| `period_start` | `date` |  |
+| `period_end` | `date` |  |
+| `total_amount` | `numeric` |  |
+| `paid_at` | `timestamptz` |  Nullable |
+| `notes` | `text` |  Nullable |
+
+## Table `sales`
+
+### Columns
+
+| Name | Type | Constraints |
+|------|------|-------------|
+| `id` | `int8` | Primary Identity |
+| `customer_id` | `int4` |  Nullable |
+| `seller_id` | `uuid` |  Nullable |
+| `lead_id` | `int4` |  Nullable |
+| `total_usd` | `numeric` |  Nullable |
+| `total_ars` | `numeric` |  Nullable |
+| `fx_rate_used` | `numeric` |  Nullable |
+| `notes` | `text` |  Nullable |
+| `sale_date` | `timestamp` |  Nullable |
+| `status` | `text` |  Nullable |
+| `payments` | `jsonb` |  Nullable |
+| `discount_type` | `text` |  Nullable |
+| `discount_value` | `numeric` |  Nullable |
+| `discount_amount` | `numeric` |  Nullable |
+| `voided_at` | `timestamptz` |  Nullable |
+| `voided_by` | `uuid` |  Nullable |
+| `void_reason` | `text` |  Nullable |
+| `void_stock_bucket` | `text` |  Nullable |
+| `sales_channel_id` | `int4` |  Nullable |
+| `surcharge_type` | `text` |  Nullable |
+| `surcharge_value` | `numeric` |  Nullable |
+| `surcharge_amount` | `numeric` |  Nullable |
+| `updated_at` | `timestamptz` |  Nullable |
+| `updated_by` | `uuid` |  Nullable |
+| `updated_fields` | `jsonb` |  Nullable |
+| `sale_type` | `text` |  Nullable |
+| `trade_in_data` | `jsonb` |  Nullable |
+
+## Table `sale_items`
+
+### Columns
+
+| Name | Type | Constraints |
+|------|------|-------------|
+| `id` | `int8` | Primary Identity |
+| `sale_id` | `int8` |  Nullable |
+| `variant_id` | `int4` |  Nullable |
+| `product_name` | `text` |  Nullable |
+| `variant_name` | `text` |  Nullable |
+| `color` | `text` |  Nullable |
+| `storage` | `text` |  Nullable |
+| `ram` | `text` |  Nullable |
+| `usd_price` | `numeric` |  Nullable |
+| `quantity` | `int4` |  Nullable |
+| `subtotal_usd` | `numeric` |  Nullable |
+| `subtotal_ars` | `numeric` |  Nullable |
+| `imei` | `varchar` |  Nullable |
+| `commission_pct` | `numeric` |  Nullable |
+| `commission_fixed` | `numeric` |  Nullable |
+| `cost_price_usd` | `numeric` |  Nullable |
+| `is_gift` | `bool` |  |
+
+## Table `sale_payments`
+
+### Columns
+
+| Name | Type | Constraints |
+|------|------|-------------|
+| `id` | `int8` | Primary |
+| `sale_id` | `int8` |  |
+| `method` | `text` |  Nullable |
+| `amount_ars` | `numeric` |  |
+| `amount_usd` | `numeric` |  Nullable |
+| `reference` | `text` |  Nullable |
+| `card_brand` | `text` |  Nullable |
+| `installments` | `int4` |  Nullable |
+| `created_at` | `timestamp` |  Nullable |
+| `payment_method_id` | `int4` |  Nullable |
+| `account_id` | `int8` |  Nullable |
+
+## Table `sale_item_imeis`
+
+### Columns
+
+| Name | Type | Constraints |
+|------|------|-------------|
+| `id` | `int4` | Primary |
+| `sale_item_id` | `int4` |  |
+| `imei` | `text` |  |
+| `created_at` | `timestamp` |  Nullable |
+| `inventory_unit_id` | `int8` |  Nullable |
+
+## Table `sales_channels`
+
+### Columns
+
+| Name | Type | Constraints |
+|------|------|-------------|
+| `id` | `int4` | Primary Identity |
+| `name` | `text` |  Unique |
+| `description` | `text` |  Nullable |
+| `is_active` | `bool` |  |
+| `created_at` | `timestamptz` |  Nullable |
+
+## Table `accounts`
+
+### Columns
+
+| Name | Type | Constraints |
+|------|------|-------------|
+| `id` | `int8` | Primary |
+| `name` | `text` |  |
+| `currency` | `text` |  |
+| `initial_balance` | `numeric` |  |
+| `notes` | `text` |  Nullable |
+| `include_in_balance` | `bool` |  |
+| `created_at` | `timestamptz` |  |
+| `is_reference_capital` | `bool` |  |
+| `is_caja_virtual` | `bool` |  |
+| `is_efectivo` | `bool` |  |
+| `active` | `bool` |  |
+
+## Table `fixed_expenses`
+
+### Columns
+
+| Name | Type | Constraints |
+|------|------|-------------|
+| `id` | `int8` | Primary |
+| `name` | `text` |  |
+| `amount` | `numeric` |  |
+| `currency` | `text` |  |
+| `account_id` | `int8` |  Nullable |
+| `category` | `text` |  Nullable |
+| `due_day` | `int4` |  Nullable |
+| `notes` | `text` |  Nullable |
+| `is_active` | `bool` |  |
+| `last_paid_at` | `timestamptz` |  Nullable |
+| `created_at` | `timestamptz` |  |
+
+## Table `expenses`
+
+### Columns
+
+| Name | Type | Constraints |
+|------|------|-------------|
+| `id` | `int8` | Primary |
+| `created_at` | `timestamptz` |  |
+| `expense_date` | `date` |  |
+| `amount` | `numeric` |  |
+| `currency` | `text` |  |
+| `amount_ars` | `numeric` |  |
+| `fx_rate_used` | `numeric` |  Nullable |
+| `account_id` | `int8` |  Nullable |
+| `category` | `text` |  Nullable |
+| `type` | `text` |  |
+| `notes` | `text` |  Nullable |
+| `fixed_expense_id` | `int8` |  Nullable |
+| `frequency_value` | `int4` |  Nullable |
+| `frequency_unit` | `text` |  Nullable |
+| `last_paid_at` | `timestamptz` |  Nullable |
+| `is_active` | `bool` |  |
+
+## Table `providers`
+
+### Columns
+
+| Name | Type | Constraints |
+|------|------|-------------|
+| `id` | `int8` | Primary |
+| `name` | `text` |  |
+| `contact_name` | `text` |  Nullable |
+| `phone` | `text` |  Nullable |
+| `email` | `text` |  Nullable |
+| `address` | `text` |  Nullable |
+| `city` | `text` |  Nullable |
+| `notes` | `text` |  Nullable |
+| `is_active` | `bool` |  |
+| `created_at` | `timestamptz` |  |
+
+## Table `purchases`
+
+### Columns
+
+| Name | Type | Constraints |
+|------|------|-------------|
+| `id` | `int8` | Primary |
+| `provider_id` | `int8` |  Nullable |
+| `purchase_date` | `date` |  |
+| `currency` | `text` |  |
+| `total_amount` | `numeric` |  |
+| `total_amount_ars` | `numeric` |  Nullable |
+| `fx_rate_used` | `numeric` |  Nullable |
+| `notes` | `text` |  Nullable |
+| `created_at` | `timestamptz` |  |
+| `status` | `text` |  |
+| `void_reason` | `text` |  Nullable |
+| `voided_at` | `timestamptz` |  Nullable |
+
+## Table `purchase_items`
+
+### Columns
+
+| Name | Type | Constraints |
+|------|------|-------------|
+| `id` | `int8` | Primary |
+| `purchase_id` | `int8` |  Nullable |
+| `variant_id` | `int4` |  Nullable |
+| `quantity` | `int4` |  |
+| `unit_cost` | `numeric` |  |
+| `subtotal` | `numeric` |  |
+
+## Table `finance_categories`
+
+### Columns
+
+| Name | Type | Constraints |
+|------|------|-------------|
+| `id` | `int8` | Primary Identity |
+| `name` | `text` |  |
+| `type` | `text` |  |
+| `is_active` | `bool` |  |
+| `created_at` | `timestamptz` |  |
+
+## Table `account_movements`
+
+### Columns
+
+| Name | Type | Constraints |
+|------|------|-------------|
+| `id` | `int8` | Primary Identity |
+| `created_at` | `timestamptz` |  |
+| `movement_date` | `date` |  |
+| `account_id` | `int8` |  |
+| `type` | `text` |  |
+| `amount` | `numeric` |  |
+| `currency` | `text` |  |
+| `amount_ars` | `numeric` |  Nullable |
+| `fx_rate_used` | `numeric` |  Nullable |
+| `related_table` | `text` |  Nullable |
+| `related_id` | `int8` |  Nullable |
+| `notes` | `text` |  Nullable |
+| `accreditation_status` | `text` |  |
+| `available_on` | `date` |  Nullable |
+| `operation_id` | `uuid` |  Nullable |
+
+## Table `purchase_payments`
+
+### Columns
+
+| Name | Type | Constraints |
+|------|------|-------------|
+| `id` | `int8` | Primary Identity |
+| `purchase_id` | `int8` |  |
+| `account_id` | `int8` |  |
+| `payment_method_id` | `int4` |  Nullable |
+| `amount` | `numeric` |  |
+| `currency` | `text` |  |
+| `amount_ars` | `numeric` |  Nullable |
+| `fx_rate_used` | `numeric` |  Nullable |
+| `created_at` | `timestamptz` |  |
+| `notes` | `text` |  Nullable |
+
+## Table `warranty_exchanges`
+
+### Columns
+
+| Name | Type | Constraints |
+|------|------|-------------|
+| `id` | `int8` | Primary Identity |
+| `sale_id` | `int8` |  |
+| `sale_item_id` | `int8` |  |
+| `original_variant_id` | `int4` |  Nullable |
+| `original_imei` | `text` |  Nullable |
+| `quantity` | `int4` |  |
+| `returned_stock_bucket` | `text` |  |
+| `replacement_variant_id` | `int4` |  |
+| `replacement_imei` | `text` |  Nullable |
+| `reason` | `text` |  |
+| `notes` | `text` |  Nullable |
+| `status` | `text` |  |
+| `created_at` | `timestamptz` |  |
+| `created_by` | `uuid` |  Nullable |
+| `price_difference_usd` | `numeric` |  |
+| `settlement_type` | `text` |  |
+| `settlement_account_id` | `int8` |  Nullable |
+| `settlement_payment_method_id` | `int4` |  Nullable |
+| `settlement_currency` | `text` |  Nullable |
+| `settlement_amount` | `numeric` |  Nullable |
+| `settlement_amount_ars` | `numeric` |  Nullable |
+| `settlement_fx_rate_used` | `numeric` |  Nullable |
+| `settlement_installments` | `int4` |  Nullable |
+| `settlement_multiplier` | `numeric` |  Nullable |
+| `store_credit_usd` | `numeric` |  |
+| `store_credit_amount_ars` | `numeric` |  Nullable |
+| `original_inventory_unit_id` | `int8` |  Nullable |
+
+## Table `aftersales_devices`
+
+### Columns
+
+| Name | Type | Constraints |
+|------|------|-------------|
+| `id` | `int8` | Primary Identity |
+| `variant_id` | `int4` |  |
+| `sale_id` | `int8` |  Nullable |
+| `warranty_exchange_id` | `int8` |  Nullable |
+| `source_type` | `text` |  |
+| `imei` | `text` |  Nullable |
+| `quantity` | `int4` |  |
+| `status` | `text` |  |
+| `notes` | `text` |  Nullable |
+| `created_at` | `timestamptz` |  |
+| `updated_at` | `timestamptz` |  |
+| `created_by` | `uuid` |  Nullable |
+| `include_in_stock_cost_balance` | `bool` |  |
+| `sold_sale_id` | `int8` |  Nullable |
+| `sold_at` | `timestamptz` |  Nullable |
+| `inventory_unit_id` | `int8` |  Nullable |
+
+## Table `warranty_exchange_items`
+
+### Columns
+
+| Name | Type | Constraints |
+|------|------|-------------|
+| `id` | `int8` | Primary Identity |
+| `warranty_exchange_id` | `int8` |  |
+| `variant_id` | `int4` |  |
+| `imei` | `text` |  Nullable |
+| `quantity` | `int4` |  |
+| `unit_price_usd` | `numeric` |  |
+| `subtotal_usd` | `numeric` |  |
+| `created_at` | `timestamptz` |  |
+| `inventory_unit_id` | `int8` |  Nullable |
+
+## Table `inventory_units`
+
+### Columns
+
+| Name | Type | Constraints |
+|------|------|-------------|
+| `id` | `int8` | Primary Identity |
+| `variant_id` | `int4` |  |
+| `purchase_id` | `int8` |  Nullable |
+| `purchase_item_id` | `int8` |  Nullable |
+| `sale_id` | `int8` |  Nullable |
+| `sale_item_id` | `int8` |  Nullable |
+| `warranty_exchange_id` | `int8` |  Nullable |
+| `identifier_value` | `text` |  |
+| `identifier_normalized` | `text` |  Nullable |
+| `status` | `text` |  |
+| `received_at` | `timestamptz` |  |
+| `sold_at` | `timestamptz` |  Nullable |
+| `returned_at` | `timestamptz` |  Nullable |
+| `notes` | `text` |  Nullable |
+| `created_at` | `timestamptz` |  |
+| `updated_at` | `timestamptz` |  |
+| `created_by` | `uuid` |  Nullable |
+| `updated_by` | `uuid` |  Nullable |
+
+## Table `inventory_unit_events`
+
+### Columns
+
+| Name | Type | Constraints |
+|------|------|-------------|
+| `id` | `int8` | Primary Identity |
+| `inventory_unit_id` | `int8` |  |
+| `event_type` | `text` |  |
+| `from_status` | `text` |  Nullable |
+| `to_status` | `text` |  Nullable |
+| `related_table` | `text` |  Nullable |
+| `related_id` | `int8` |  Nullable |
+| `notes` | `text` |  Nullable |
+| `payload` | `jsonb` |  |
+| `created_at` | `timestamptz` |  |
+| `created_by` | `uuid` |  Nullable |
+
+## Table `cash_registers`
+
+### Columns
+
+| Name | Type | Constraints |
+|------|------|-------------|
+| `id` | `int8` | Primary Identity |
+| `user_id` | `uuid` |  |
+| `register_date` | `date` |  |
+| `status` | `text` |  |
+| `currency` | `text` |  |
+| `opening_amount` | `numeric` |  |
+| `closed_amount` | `numeric` |  Nullable |
+| `expected_amount` | `numeric` |  Nullable |
+| `difference` | `numeric` |  Nullable |
+| `opened_at` | `timestamptz` |  |
+| `closed_at` | `timestamptz` |  Nullable |
+| `distribution` | `jsonb` |  Nullable |
+| `notes` | `text` |  Nullable |
+| `created_at` | `timestamptz` |  Nullable |
+| `opening_amounts` | `jsonb` |  |
+| `closed_amounts` | `jsonb` |  Nullable |
+| `difference_per_currency` | `jsonb` |  Nullable |
+
+## Table `cash_register_movements`
+
+### Columns
+
+| Name | Type | Constraints |
+|------|------|-------------|
+| `id` | `int8` | Primary Identity |
+| `cash_register_id` | `int8` |  |
+| `type` | `text` |  |
+| `amount` | `numeric` |  |
+| `currency` | `text` |  |
+| `related_table` | `text` |  Nullable |
+| `related_id` | `int8` |  Nullable |
+| `notes` | `text` |  Nullable |
+| `created_at` | `timestamptz` |  Nullable |
+| `created_by` | `uuid` |  Nullable |
+| `payment_method_id` | `int4` |  Nullable |
+| `payment_method_name` | `text` |  Nullable |
+| `reference` | `text` |  Nullable |
+| `multiplier` | `numeric` |  Nullable |
+| `net_amount` | `numeric` |  Nullable |
+| `accreditation_status` | `text` |  Nullable |
+| `available_on` | `date` |  Nullable |
+| `sale_payment_id` | `int8` |  Nullable |
+| `account_id` | `int8` |  Nullable |
+| `operation_id` | `uuid` |  Nullable |
+
+## Table `order_reservations`
+
+### Columns
+
+| Name | Type | Constraints |
+|------|------|-------------|
+| `id` | `int8` | Primary Identity |
+| `lead_id` | `int4` |  |
+| `product_variant_id` | `int4` |  |
+| `quantity` | `int4` |  |
+| `status` | `text` |  |
+| `reserved_at` | `timestamptz` |  |
+| `expires_at` | `timestamptz` |  |
+| `released_at` | `timestamptz` |  Nullable |
+| `released_by` | `uuid` |  Nullable |
+| `release_reason` | `text` |  Nullable |
+| `created_by` | `uuid` |  Nullable |
+| `inventory_unit_id` | `int8` |  Nullable |
+
+## Table `order_deposits`
+
+### Columns
+
+| Name | Type | Constraints |
+|------|------|-------------|
+| `id` | `int8` | Primary Identity |
+| `lead_id` | `int4` |  |
+| `sale_id` | `int8` |  Nullable |
+| `customer_id` | `int4` |  Nullable |
+| `amount` | `numeric` |  |
+| `currency` | `text` |  |
+| `amount_ars` | `numeric` |  |
+| `fx_rate_used` | `numeric` |  Nullable |
+| `payment_method_id` | `int4` |  Nullable |
+| `account_id` | `int8` |  Nullable |
+| `reference` | `text` |  Nullable |
+| `notes` | `text` |  Nullable |
+| `status` | `text` |  |
+| `received_at` | `timestamptz` |  |
+| `applied_at` | `timestamptz` |  Nullable |
+| `created_by` | `uuid` |  Nullable |
+
+## RLS Policies
+
+### `sales_channels`
+
+| Policy | Command | Roles | Action | USING | WITH CHECK |
+|--------|---------|-------|--------|-------|------------|
+| `sales_channels_select_auth` | SELECT | authenticated | PERMISSIVE | `true` | — |
+| `sales_channels_write_adminlike` | ALL | authenticated | PERMISSIVE | `is_admin_like()` | `is_admin_like()` |
+
+### `providers`
+
+| Policy | Command | Roles | Action | USING | WITH CHECK |
+|--------|---------|-------|--------|-------|------------|
+| `providers_select_roles` | SELECT | authenticated | PERMISSIVE | `(is_owner() OR is_superadmin())` | — |
+| `providers_write_owner` | ALL | authenticated | PERMISSIVE | `is_owner()` | `is_owner()` |
+
+### `finance_categories`
+
+| Policy | Command | Roles | Action | USING | WITH CHECK |
+|--------|---------|-------|--------|-------|------------|
+| `finance_categories_owner_all` | ALL | authenticated | PERMISSIVE | `is_owner()` | `is_owner()` |
+
+### `account_movements`
+
+| Policy | Command | Roles | Action | USING | WITH CHECK |
+|--------|---------|-------|--------|-------|------------|
+| `account_movements_owner_all` | ALL | authenticated | PERMISSIVE | `is_owner()` | `is_owner()` |
+
+### `expenses`
+
+| Policy | Command | Roles | Action | USING | WITH CHECK |
+|--------|---------|-------|--------|-------|------------|
+| `expenses_owner_all` | ALL | authenticated | PERMISSIVE | `is_owner()` | `is_owner()` |
+
+### `fixed_expenses`
+
+| Policy | Command | Roles | Action | USING | WITH CHECK |
+|--------|---------|-------|--------|-------|------------|
+| `fixed_expenses_owner_all` | ALL | authenticated | PERMISSIVE | `is_owner()` | `is_owner()` |
+
+### `inventory_units`
+
+| Policy | Command | Roles | Action | USING | WITH CHECK |
+|--------|---------|-------|--------|-------|------------|
+| `inventory_units_select_roles` | SELECT | authenticated | PERMISSIVE | `(is_owner() OR is_superadmin() OR is_seller())` | — |
+| `inventory_units_write_roles` | ALL | authenticated | PERMISSIVE | `(is_owner() OR is_superadmin())` | `(is_owner() OR is_superadmin())` |
+
+### `inventory_unit_events`
+
+| Policy | Command | Roles | Action | USING | WITH CHECK |
+|--------|---------|-------|--------|-------|------------|
+| `inventory_unit_events_select_roles` | SELECT | authenticated | PERMISSIVE | `(is_owner() OR is_superadmin() OR is_seller())` | — |
+| `inventory_unit_events_insert_roles` | INSERT | authenticated | PERMISSIVE | — | `(is_owner() OR is_superadmin())` |
+
+### `purchases`
+
+| Policy | Command | Roles | Action | USING | WITH CHECK |
+|--------|---------|-------|--------|-------|------------|
+| `purchases_select_roles` | SELECT | authenticated | PERMISSIVE | `(is_owner() OR is_superadmin())` | — |
+| `purchases_write_owner` | ALL | authenticated | PERMISSIVE | `is_owner()` | `is_owner()` |
+
+### `purchase_items`
+
+| Policy | Command | Roles | Action | USING | WITH CHECK |
+|--------|---------|-------|--------|-------|------------|
+| `purchase_items_select_roles` | SELECT | authenticated | PERMISSIVE | `(is_owner() OR is_superadmin())` | — |
+| `purchase_items_write_owner` | ALL | authenticated | PERMISSIVE | `is_owner()` | `is_owner()` |
+
+### `sale_payments`
+
+| Policy | Command | Roles | Action | USING | WITH CHECK |
+|--------|---------|-------|--------|-------|------------|
+| `sale_payments_select_if_parent_visible` | SELECT | authenticated | PERMISSIVE | `(EXISTS ( SELECT 1    FROM sales s   WHERE ((s.id = sale_payments.sale_id) AND (is_admin_like() OR (s.seller_id = auth.uid())))))` | — |
+| `sale_payments_insert_adminlike` | INSERT | authenticated | PERMISSIVE | — | `(is_admin_like() AND (EXISTS ( SELECT 1    FROM sales s   WHERE (s.id = sale_payments.sale_id))))` |
+| `sale_payments_update_owner` | UPDATE | authenticated | PERMISSIVE | `is_owner()` | `is_owner()` |
+| `sale_payments_delete_owner` | DELETE | authenticated | PERMISSIVE | `is_owner()` | — |
+
+### `purchase_payments`
+
+| Policy | Command | Roles | Action | USING | WITH CHECK |
+|--------|---------|-------|--------|-------|------------|
+| `purchase_payments_select_roles` | SELECT | authenticated | PERMISSIVE | `(is_owner() OR is_superadmin())` | — |
+| `purchase_payments_write_owner` | ALL | authenticated | PERMISSIVE | `is_owner()` | `is_owner()` |
+
+### `aftersales_devices`
+
+| Policy | Command | Roles | Action | USING | WITH CHECK |
+|--------|---------|-------|--------|-------|------------|
+| `aftersales_devices_select_roles` | SELECT | authenticated | PERMISSIVE | `(is_owner() OR is_superadmin())` | — |
+| `aftersales_devices_write_roles` | ALL | authenticated | PERMISSIVE | `(is_owner() OR is_superadmin())` | `(is_owner() OR is_superadmin())` |
+
+### `warranty_exchanges`
+
+| Policy | Command | Roles | Action | USING | WITH CHECK |
+|--------|---------|-------|--------|-------|------------|
+| `warranty_exchanges_select_roles` | SELECT | authenticated | PERMISSIVE | `(is_owner() OR is_superadmin())` | — |
+| `warranty_exchanges_write_roles` | ALL | authenticated | PERMISSIVE | `(is_owner() OR is_superadmin())` | `(is_owner() OR is_superadmin())` |
+
+### `warranty_exchange_items`
+
+| Policy | Command | Roles | Action | USING | WITH CHECK |
+|--------|---------|-------|--------|-------|------------|
+| `warranty_exchange_items_select_roles` | SELECT | authenticated | PERMISSIVE | `(EXISTS ( SELECT 1    FROM warranty_exchanges we   WHERE ((we.id = warranty_exchange_items.warranty_exchange_id) AND (is_owner() OR is_superadmin()))))` | — |
+| `warranty_exchange_items_write_roles` | ALL | authenticated | PERMISSIVE | `(EXISTS ( SELECT 1    FROM warranty_exchanges we   WHERE ((we.id = warranty_exchange_items.warranty_exchange_id) AND (is_owner() OR is_superadmin()))))` | `(EXISTS ( SELECT 1    FROM warranty_exchanges we   WHERE ((we.id = warranty_exchange_items.warranty_exchange_id) AND (is_owner() OR is_superadmin()))))` |
+
+### `customers`
+
+| Policy | Command | Roles | Action | USING | WITH CHECK |
+|--------|---------|-------|--------|-------|------------|
+| `customers_insert_auth` | INSERT | authenticated | PERMISSIVE | — | `true` |
+| `customers_update_adminlike` | UPDATE | authenticated | PERMISSIVE | `is_admin_like()` | `is_admin_like()` |
+| `customers_delete_adminlike` | DELETE | authenticated | PERMISSIVE | `is_admin_like()` | — |
+| `customers_select_auth` | SELECT | authenticated | PERMISSIVE | `true` | — |
+
+### `accounts`
+
+| Policy | Command | Roles | Action | USING | WITH CHECK |
+|--------|---------|-------|--------|-------|------------|
+| `accounts_write_owner` | ALL | authenticated | PERMISSIVE | `is_owner()` | `is_owner()` |
+| `accounts_select_roles` | SELECT | authenticated | PERMISSIVE | `(is_owner() OR is_superadmin() OR is_seller())` | — |
+
+### `user_roles`
+
+| Policy | Command | Roles | Action | USING | WITH CHECK |
+|--------|---------|-------|--------|-------|------------|
+| `user_roles_select_auth` | SELECT | authenticated | PERMISSIVE | `true` | — |
+| `user_roles_insert_owner` | INSERT | authenticated | PERMISSIVE | — | `is_owner()` |
+| `user_roles_update_owner` | UPDATE | authenticated | PERMISSIVE | `is_owner()` | `is_owner()` |
+| `user_roles_delete_owner` | DELETE | authenticated | PERMISSIVE | `is_owner()` | — |
+
+### `sale_item_imeis`
+
+| Policy | Command | Roles | Action | USING | WITH CHECK |
+|--------|---------|-------|--------|-------|------------|
+| `sale_item_imeis_delete_owner` | DELETE | authenticated | PERMISSIVE | `is_owner()` | — |
+| `sale_item_imeis_select_if_parent_visible` | SELECT | authenticated | PERMISSIVE | `(EXISTS ( SELECT 1    FROM (sale_items si      JOIN sales s ON ((s.id = si.sale_id)))   WHERE ((si.id = sale_item_imeis.sale_item_id) AND (is_admin_like() OR (s.seller_id = auth.uid())))))` | — |
+| `sale_item_imeis_insert_adminlike` | INSERT | authenticated | PERMISSIVE | — | `(is_admin_like() AND (EXISTS ( SELECT 1    FROM sale_items si   WHERE (si.id = sale_item_imeis.sale_item_id))))` |
+| `sale_item_imeis_update_owner` | UPDATE | authenticated | PERMISSIVE | `is_owner()` | `is_owner()` |
+
+### `cash_registers`
+
+| Policy | Command | Roles | Action | USING | WITH CHECK |
+|--------|---------|-------|--------|-------|------------|
+| `cash_registers_select_admin` | SELECT | authenticated | PERMISSIVE | `is_admin_like()` | — |
+| `cash_registers_insert_admin` | INSERT | authenticated | PERMISSIVE | — | `is_admin_like()` |
+| `cash_registers_update_admin` | UPDATE | authenticated | PERMISSIVE | `is_admin_like()` | `is_admin_like()` |
+
+### `cash_register_movements`
+
+| Policy | Command | Roles | Action | USING | WITH CHECK |
+|--------|---------|-------|--------|-------|------------|
+| `cash_movements_select_admin` | SELECT | authenticated | PERMISSIVE | `is_admin_like()` | — |
+| `cash_movements_insert_admin` | INSERT | authenticated | PERMISSIVE | — | `is_admin_like()` |
+
+### `commission_payments`
+
+| Policy | Command | Roles | Action | USING | WITH CHECK |
+|--------|---------|-------|--------|-------|------------|
+| `commission_payments_select_adminlike` | SELECT | authenticated | PERMISSIVE | `is_admin_like()` | — |
+| `commission_payments_select_own_seller` | SELECT | authenticated | PERMISSIVE | `(seller_id = auth.uid())` | — |
+| `commission_payments_write_adminlike` | ALL | authenticated | PERMISSIVE | `is_admin_like()` | `is_admin_like()` |
+
+### `order_reservations`
+
+| Policy | Command | Roles | Action | USING | WITH CHECK |
+|--------|---------|-------|--------|-------|------------|
+| `order_reservations_authenticated_select` | SELECT | authenticated | PERMISSIVE | `true` | — |
+
+### `order_deposits`
+
+| Policy | Command | Roles | Action | USING | WITH CHECK |
+|--------|---------|-------|--------|-------|------------|
+| `order_deposits_authenticated_select` | SELECT | authenticated | PERMISSIVE | `true` | — |
+
+### `users`
+
+| Policy | Command | Roles | Action | USING | WITH CHECK |
+|--------|---------|-------|--------|-------|------------|
+| `users_select_own` | SELECT | authenticated | PERMISSIVE | `(id_auth = auth.uid())` | — |
+| `users_update_own` | UPDATE | authenticated | PERMISSIVE | `(id_auth = auth.uid())` | `(id_auth = auth.uid())` |
+| `users_select_superadmin_all` | SELECT | authenticated | PERMISSIVE | `is_superadmin()` | — |
+| `users_select_owner_all` | SELECT | authenticated | PERMISSIVE | `is_owner()` | — |
+| `users_update_owner_all` | UPDATE | authenticated | PERMISSIVE | `is_owner()` | `is_owner()` |
+
+### `brands`
+
+| Policy | Command | Roles | Action | USING | WITH CHECK |
+|--------|---------|-------|--------|-------|------------|
+| `brands_select_auth` | SELECT | authenticated | PERMISSIVE | `true` | — |
+| `brands_write_adminlike` | ALL | authenticated | PERMISSIVE | `is_admin_like()` | `is_admin_like()` |
+
+### `categories`
+
+| Policy | Command | Roles | Action | USING | WITH CHECK |
+|--------|---------|-------|--------|-------|------------|
+| `categories_select_auth` | SELECT | authenticated | PERMISSIVE | `true` | — |
+| `categories_write_adminlike` | ALL | authenticated | PERMISSIVE | `is_admin_like()` | `is_admin_like()` |
+
+### `products`
+
+| Policy | Command | Roles | Action | USING | WITH CHECK |
+|--------|---------|-------|--------|-------|------------|
+| `products_select_auth` | SELECT | authenticated | PERMISSIVE | `true` | — |
+| `products_write_adminlike` | ALL | authenticated | PERMISSIVE | `is_admin_like()` | `is_admin_like()` |
+
+### `product_variants`
+
+| Policy | Command | Roles | Action | USING | WITH CHECK |
+|--------|---------|-------|--------|-------|------------|
+| `variants_select_auth` | SELECT | authenticated | PERMISSIVE | `true` | — |
+| `variants_write_adminlike` | ALL | authenticated | PERMISSIVE | `is_admin_like()` | `is_admin_like()` |
+
+### `fx_rates`
+
+| Policy | Command | Roles | Action | USING | WITH CHECK |
+|--------|---------|-------|--------|-------|------------|
+| `fx_select_auth` | SELECT | authenticated | PERMISSIVE | `true` | — |
+| `fx_write_adminlike` | ALL | authenticated | PERMISSIVE | `is_admin_like()` | `is_admin_like()` |
+
+### `commission_rules`
+
+| Policy | Command | Roles | Action | USING | WITH CHECK |
+|--------|---------|-------|--------|-------|------------|
+| `commission_rules_select_auth` | SELECT | authenticated | PERMISSIVE | `true` | — |
+| `commission_rules_write_adminlike` | ALL | authenticated | PERMISSIVE | `is_admin_like()` | `is_admin_like()` |
+
+### `payment_methods`
+
+| Policy | Command | Roles | Action | USING | WITH CHECK |
+|--------|---------|-------|--------|-------|------------|
+| `payment_methods_select_auth` | SELECT | authenticated | PERMISSIVE | `true` | — |
+| `payment_methods_write_adminlike` | ALL | authenticated | PERMISSIVE | `is_admin_like()` | `is_admin_like()` |
+
+### `payment_installments`
+
+| Policy | Command | Roles | Action | USING | WITH CHECK |
+|--------|---------|-------|--------|-------|------------|
+| `installments_select_auth` | SELECT | authenticated | PERMISSIVE | `true` | — |
+| `installments_write_adminlike` | ALL | authenticated | PERMISSIVE | `is_admin_like()` | `is_admin_like()` |
+
+### `leads`
+
+| Policy | Command | Roles | Action | USING | WITH CHECK |
+|--------|---------|-------|--------|-------|------------|
+| `leads_select_adminlike` | SELECT | authenticated | PERMISSIVE | `is_admin_like()` | — |
+| `leads_select_own_seller` | SELECT | authenticated | PERMISSIVE | `(referred_by = auth.uid())` | — |
+| `leads_insert_own_seller` | INSERT | authenticated | PERMISSIVE | — | `(referred_by = auth.uid())` |
+| `leads_update_own_seller` | UPDATE | authenticated | PERMISSIVE | `(referred_by = auth.uid())` | `(referred_by = auth.uid())` |
+| `leads_write_adminlike` | ALL | authenticated | PERMISSIVE | `is_admin_like()` | `is_admin_like()` |
+
+### `sales`
+
+| Policy | Command | Roles | Action | USING | WITH CHECK |
+|--------|---------|-------|--------|-------|------------|
+| `sales_select_adminlike` | SELECT | authenticated | PERMISSIVE | `is_admin_like()` | — |
+| `sales_select_own_seller` | SELECT | authenticated | PERMISSIVE | `(seller_id = auth.uid())` | — |
+| `sales_insert_adminlike` | INSERT | authenticated | PERMISSIVE | — | `is_admin_like()` |
+| `sales_update_owner` | UPDATE | authenticated | PERMISSIVE | `is_owner()` | `is_owner()` |
+| `sales_delete_owner` | DELETE | authenticated | PERMISSIVE | `is_owner()` | — |
+
+### `sale_items`
+
+| Policy | Command | Roles | Action | USING | WITH CHECK |
+|--------|---------|-------|--------|-------|------------|
+| `sale_items_select_if_parent_visible` | SELECT | authenticated | PERMISSIVE | `(EXISTS ( SELECT 1    FROM sales s   WHERE ((s.id = sale_items.sale_id) AND (is_admin_like() OR (s.seller_id = auth.uid())))))` | — |
+| `sale_items_insert_adminlike` | INSERT | authenticated | PERMISSIVE | — | `(is_admin_like() AND (EXISTS ( SELECT 1    FROM sales s   WHERE (s.id = sale_items.sale_id))))` |
+| `sale_items_update_owner` | UPDATE | authenticated | PERMISSIVE | `is_owner()` | `is_owner()` |
+| `sale_items_delete_owner` | DELETE | authenticated | PERMISSIVE | `is_owner()` | — |
+
