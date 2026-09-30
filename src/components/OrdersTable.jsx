@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "../lib/supabaseClient";
 import { toast } from "sonner";
 import SheetNewSale from "./SheetNewSale";
+import SheetCanje from "./SheetCanje";
 import {
   Popover,
   PopoverTrigger,
@@ -36,6 +37,7 @@ import {
   IconCircleCheck,
   IconCircleDashed,
   IconDownload,
+  IconArrowsExchange,
 } from "@tabler/icons-react";
 import { formatPersonName } from "@/utils/formatName";
 import { generateOrderDepositPDF } from "@/utils/generateOrderDepositPDF";
@@ -355,6 +357,8 @@ const OrdersTable = () => {
   const closeReschedule = () => setRescheduleLead(null);
   const [saleLead, setSaleLead] = useState(null);
   const [saleOpen, setSaleOpen] = useState(false);
+  const [canjeLead, setCanjeLead] = useState(null);
+  const [canjeOpen, setCanjeOpen] = useState(false);
   const [depositLead, setDepositLead] = useState(null);
   const [depositOpen, setDepositOpen] = useState(false);
 
@@ -366,6 +370,11 @@ const OrdersTable = () => {
   const handleCreateSale = (lead) => {
     setSaleLead(lead);
     setSaleOpen(true);
+  };
+
+  const handleCreateCanje = (lead) => {
+    setCanjeLead(lead);
+    setCanjeOpen(true);
   };
 
   const formatDate = (dateString) =>
@@ -763,6 +772,12 @@ const OrdersTable = () => {
                                         <IconReceipt2 className="mr-2 h-4 w-4" />
                                         Registrar venta
                                      </DropdownMenuItem>
+                                     <DropdownMenuItem
+                                       onClick={() => handleCreateCanje(o)}
+                                     >
+                                       <IconArrowsExchange className="mr-2 h-4 w-4" />
+                                       Registrar canje
+                                     </DropdownMenuItem>
                                       {/* <DropdownMenuItem
                                         onClick={() =>
                                           handleUpdateStatus(o.id, "sin_exito")
@@ -864,6 +879,20 @@ const OrdersTable = () => {
         onOpenChange={setSaleOpen}
         lead={saleLead}
         onSaleCreated={loadPendingSales}
+      />
+
+      <SheetCanje
+        open={canjeOpen}
+        onOpenChange={(value) => {
+          setCanjeOpen(value);
+          if (!value) setCanjeLead(null);
+        }}
+        lead={canjeLead}
+        userId={id_auth}
+        onSaleCreated={() => {
+          fetchOrders(false);
+          loadPendingSales();
+        }}
       />
 
       <DialogCollectOrderDeposit

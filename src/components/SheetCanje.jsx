@@ -72,7 +72,7 @@ const getVariantQuantity = (variant) =>
     ? variant?.inventory_unit_ids?.length ?? 0
     : Number(variant?.quantity || 0);
 
-export default function SheetCanje({ open, onOpenChange, userId }) {
+export default function SheetCanje({ open, onOpenChange, userId, lead = null, onSaleCreated }) {
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
 
@@ -163,9 +163,80 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
     load();
   }, [open]);
 
+  // Precarga desde un pedido: cliente, vendedor y carrito de compra
+  useEffect(() => {
+    if (!open || !lead) return;
+
+    setSelectedCustomer(lead.customers || null);
+
+    if (lead.seller && lead.seller.user?.is_active) {
+      setSelectedSeller({
+        id_auth: lead.seller.id_auth,
+        name: lead.seller.user?.name,
+        last_name: lead.seller.user?.last_name,
+        phone: lead.seller.user?.phone,
+        email: lead.seller.user?.email,
+        is_active: lead.seller.user?.is_active,
+      });
+    } else {
+      setSelectedSeller(null);
+    }
+
+    const enrichCart = async () => {
+      const ids = (lead.interested_variants || []).map((v) => v.id).filter(Boolean);
+      if (ids.length === 0) return;
+
+      const { data, error } = await supabase
+        .from("product_variants")
+        .select(
+          "id, variant_name, color, storage, ram, usd_price, wholesale_price, stock, active, product_id, products(name, inventory_tracking_mode)"
+        )
+        .in("id", ids);
+      if (error || !data || data.length === 0) return;
+
+      let reservedUnit = null;
+      if (lead.reserved_inventory_unit_id) {
+        reservedUnit = (
+          await supabase
+            .from("inventory_units")
+            .select("id, identifier_value")
+            .eq("id", lead.reserved_inventory_unit_id)
+            .maybeSingle()
+        ).data;
+      }
+
+      const built = data.map((variant) => {
+        const isSerial = isSerialTrackedVariant(variant);
+        const item = {
+          ...variant,
+          quantity: isSerial ? 0 : 1,
+          imeis: [],
+          inventory_unit_ids: [],
+          serialSearch: "",
+          isFree: false,
+        };
+        if (
+          String(variant.id) === String(lead.reserved_variant_id) &&
+          reservedUnit
+        ) {
+          item.inventory_unit_ids = [reservedUnit.id];
+          item.imeis = [reservedUnit.identifier_value];
+        }
+        return item;
+      });
+
+      setCart((prev) => {
+        const existing = new Set(prev.map((i) => i.id));
+        const additions = built.filter((i) => !existing.has(i.id));
+        return additions.length > 0 ? [...prev, ...additions] : prev;
+      });
+    };
+    enrichCart();
+  }, [open, lead]);
+
   // Dynamic customer search
   useEffect(() => {
-    if (!focusCustomer) return;
+    if (!focusCustomer || lead) return;
     const q = searchCustomer.trim();
     const fetchCustomers = async () => {
       const { data } = await supabase
@@ -178,7 +249,7 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
       setCustomers(data || []);
     };
     fetchCustomers();
-  }, [focusCustomer, searchCustomer]);
+  }, [focusCustomer, searchCustomer, lead]);
 
   // Fetch products for step 3
   useEffect(() => {
@@ -318,6 +389,32 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
   const difference = useMemo(() => {
     return cartTotalArs - totalReceivedArs;
   }, [cartTotalArs, totalReceivedArs]);
+
+  // Seña del pedido (si el canje viene de un pedido)
+  const depositData = useMemo(() => {
+    if (!lead?.deposit_paid) {
+      return { amount: 0, currency: "ARS", amountARS: 0 };
+    }
+
+    const amount = Number(lead.deposit_amount || 0);
+    const currency = lead.deposit_currency || "ARS";
+    const safeAmount = Number.isFinite(amount) ? amount : 0;
+    const amountARS =
+      currency === "USD" && exchangeRate
+        ? safeAmount * exchangeRate
+        : safeAmount;
+
+    return { amount: safeAmount, currency, amountARS };
+  }, [lead, exchangeRate]);
+
+  // La seña solo reduce el "A cobrar" cuando hay importe a cobrar
+  const amountToCollect = useMemo(() => {
+    if (difference <= 0) return difference;
+    return Math.max(difference - depositData.amountARS, 0);
+  }, [difference, depositData.amountARS]);
+
+  const showAppliedDeposit =
+    Boolean(lead?.deposit_paid) && depositData.amountARS > 0 && difference > 0;
 
   // Add current form entry to receivedList
   const handleAddReceived = async () => {
@@ -659,6 +756,9 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
         p_fx_rate_used: effectiveRate || 0,
         p_items: items,
         p_notes: notes || null,
+        p_lead_id: lead?.id ?? null,
+        p_deposit_amount_ars:
+          lead && showAppliedDeposit ? depositData.amountARS : 0,
       });
 
       if (error) throw error;
@@ -666,6 +766,8 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
       toast.success("Canje registrado", {
         description: `Venta #${data?.sale_id || ""} creada como pendiente`,
       });
+      onSaleCreated?.();
+      window.dispatchEvent(new Event("sale-created"));
       onOpenChange(false);
     } catch (err) {
       toast.error("Error al registrar canje", { description: err.message });
@@ -718,29 +820,33 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
               <div className="relative">
                 <div className="flex items-center gap-2">
                   <Input
-                    placeholder="Buscar cliente..."
+                    readOnly={!!lead}
+                    placeholder={lead ? "Asignado desde el pedido" : "Buscar cliente..."}
                     value={
                       selectedCustomer
                         ? formatPersonName(selectedCustomer.name, selectedCustomer.last_name)
                         : searchCustomer
                     }
-                    onFocus={() => setFocusCustomer(true)}
-                    onBlur={() => setTimeout(() => setFocusCustomer(false), 160)}
+                    onFocus={() => !lead && setFocusCustomer(true)}
+                    onBlur={() => !lead && setTimeout(() => setFocusCustomer(false), 160)}
                     onChange={(e) => {
+                      if (lead) return;
                       setSelectedCustomer(null);
                       setSearchCustomer(e.target.value);
                     }}
                   />
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    onClick={() => setDialogCustomerOpen(true)}
-                    title="Nuevo cliente"
-                  >
-                    <IconUserPlus className="h-5 w-5" />
-                  </Button>
+                  {!lead && (
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      onClick={() => setDialogCustomerOpen(true)}
+                      title="Nuevo cliente"
+                    >
+                      <IconUserPlus className="h-5 w-5" />
+                    </Button>
+                  )}
                 </div>
-                {focusCustomer && (
+                {focusCustomer && !lead && (
                   <div className="absolute z-[50] mt-1 w-full rounded-md border bg-background shadow">
                     <ScrollArea className="max-h-[250px] overflow-y-auto">
                       {customers.length > 0 ? (
@@ -777,7 +883,8 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
                 <h3 className="mb-3 font-medium">Asignar vendedor (opcional)</h3>
                 <div className="relative">
                   <Input
-                    placeholder="Buscar vendedor..."
+                    disabled={!!lead}
+                    placeholder={lead ? "Asignado desde el pedido" : "Buscar vendedor..."}
                     value={
                       selectedSeller
                         ? `${selectedSeller.name ?? ""} ${selectedSeller.last_name ?? ""}`.trim()
@@ -1298,6 +1405,33 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
                       <span className="text-muted-foreground">Total compra:</span>
                       <span className="font-medium">{formatARS(cartTotalArs)}</span>
                     </div>
+                    {lead?.deposit_paid && depositData.amountARS > 0 && (
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">
+                          {showAppliedDeposit ? "Seña aplicada:" : "Seña del pedido:"}
+                        </span>
+                        <span
+                          className={
+                            showAppliedDeposit
+                              ? "font-medium text-green-600"
+                              : "font-medium text-muted-foreground"
+                          }
+                        >
+                          {showAppliedDeposit ? "-" : ""}
+                          {formatARS(depositData.amountARS)}
+                          {depositData.currency !== "ARS" && (
+                            <span className="ml-1 text-xs font-normal text-muted-foreground">
+                              (USD {depositData.amount.toLocaleString("es-AR")})
+                            </span>
+                          )}
+                          {!showAppliedDeposit && (
+                            <span className="ml-1 text-xs font-normal">
+                              (no descuenta)
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                    )}
                     {difference === 0 ? (
                       <div className="flex justify-between text-sm border-t pt-1">
                         <span className="font-medium">Canje</span>
@@ -1306,7 +1440,7 @@ export default function SheetCanje({ open, onOpenChange, userId }) {
                     ) : difference > 0 ? (
                       <div className="flex justify-between text-sm border-t pt-1">
                         <span className="font-medium">A cobrar:</span>
-                        <span className="font-bold text-foreground">{formatARS(difference)}</span>
+                        <span className="font-bold text-foreground">{formatARS(amountToCollect)}</span>
                       </div>
                     ) : (
                       <div className="flex justify-between text-sm border-t pt-1">
