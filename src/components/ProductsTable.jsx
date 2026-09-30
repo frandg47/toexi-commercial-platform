@@ -70,6 +70,7 @@ import {
 const TABLE_COLUMNS = [
   { id: "image", label: "Imagen" },
   { id: "name", label: "Producto" },
+  { id: "sku", label: "SKU" },
   { id: "brand", label: "Marca" },
   { id: "stock", label: "Stock" },
   // { id: "usd_price", label: "Precio USD" },
@@ -110,6 +111,53 @@ const getProductInitials = (name) => {
   return parts.length === 1
     ? parts[0].slice(0, 2).toUpperCase()
     : (parts[0][0] + parts[1][0]).toUpperCase();
+};
+
+// SKUs activos de un producto, ordenados para mostrar siempre el mismo primero
+const getProductSkus = (product) =>
+  (product?.variants || [])
+    .map((v) => String(v.sku || "").trim())
+    .filter(Boolean)
+    .sort();
+
+const getFirstSku = (product) => getProductSkus(product)[0] || "";
+
+// Muestra el primer SKU y un contador; el tooltip lista todos.
+const SkuCell = ({ product }) => {
+  const skus = getProductSkus(product);
+
+  if (skus.length === 0) {
+    return <span className="text-xs text-muted-foreground">—</span>;
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <div className="flex items-center gap-1">
+          <Badge variant="outline" className="font-mono text-xs">
+            {skus[0]}
+          </Badge>
+          {skus.length > 1 && (
+            <span className="text-xs text-muted-foreground">
+              +{skus.length - 1}
+            </span>
+          )}
+        </div>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-xs">
+        <div className="space-y-0.5 font-mono text-xs">
+          {skus.slice(0, 12).map((s) => (
+            <div key={s}>{s}</div>
+          ))}
+          {skus.length > 12 && (
+            <div className="text-muted-foreground">
+              +{skus.length - 12} más
+            </div>
+          )}
+        </div>
+      </TooltipContent>
+    </Tooltip>
+  );
 };
 
 const ProductsTable = ({ refreshToken = 0, isSellerView = false }) => {
@@ -188,12 +236,22 @@ const ProductsTable = ({ refreshToken = 0, isSellerView = false }) => {
 
     try {
       let brandIds = [];
+      let skuProductIds = [];
       if (debouncedSearch) {
-        const { data: brandMatches } = await supabase
-          .from("brands")
-          .select("id")
-          .ilike("name", `%${debouncedSearch}%`);
-        brandIds = (brandMatches || []).map((b) => b.id);
+        // PostgREST no permite un OR entre columnas del padre y de un recurso
+        // embebido, asi que el match por SKU se resuelve con un join !inner
+        // aparte y despues se fusiona por id, igual que la busqueda por marca.
+        const [brandMatches, skuMatches] = await Promise.all([
+          supabase.from("brands").select("id").ilike("name", `%${debouncedSearch}%`),
+          supabase
+            .from("products")
+            .select("id, product_variants!inner(sku)")
+            .ilike("product_variants.sku", `%${debouncedSearch}%`)
+            .limit(500),
+        ]);
+
+        brandIds = (brandMatches.data || []).map((b) => b.id);
+        skuProductIds = (skuMatches.data || []).map((r) => r.id);
       }
 
       const from = (page - 1) * pageSize;
@@ -218,11 +276,12 @@ const ProductsTable = ({ refreshToken = 0, isSellerView = false }) => {
              active,
              brands (id, name),
              categories (id, name),
-             product_variants (
-                id,
-                storage,
-                ram,
-                color,
+              product_variants (
+                 id,
+                 sku,
+                 storage,
+                 ram,
+                 color,
                 usd_price,
                 cost_price_usd,
                 stock,
@@ -263,14 +322,20 @@ const ProductsTable = ({ refreshToken = 0, isSellerView = false }) => {
         productsQuery = productsQuery.eq("category_id", Number(selectedCategory));
       }
       if (debouncedSearch) {
-        const term = `%${debouncedSearch}%`;
+        // Se neutralizan los caracteres que rompen la sintaxis del filtro .or()
+        const term = `%${debouncedSearch.replace(/[,()]/g, " ").trim()}%`;
+        const conditions = [`name.ilike.${term}`];
         if (brandIds.length) {
-          productsQuery = productsQuery.or(
-            `name.ilike.${term},brand_id.in.(${brandIds.join(",")})`
-          );
-        } else {
-          productsQuery = productsQuery.ilike("name", term);
+          conditions.push(`brand_id.in.(${brandIds.join(",")})`);
         }
+        if (skuProductIds.length) {
+          conditions.push(`id.in.(${skuProductIds.join(",")})`);
+        }
+
+        productsQuery =
+          conditions.length > 1
+            ? productsQuery.or(conditions.join(","))
+            : productsQuery.ilike("name", term);
       }
 
       const [
@@ -576,6 +641,7 @@ const ProductsTable = ({ refreshToken = 0, isSellerView = false }) => {
 
     const compareValues = (a, b, col) => {
       if (col === "name") return a.name.localeCompare(b.name) * dir;
+      if (col === "sku") return getFirstSku(a).localeCompare(getFirstSku(b)) * dir;
       if (col === "brand") return a.brandName.localeCompare(b.brandName) * dir;
       if (col === "stock") return (getAvailableStock(a) - getAvailableStock(b)) * dir;
       if (col === "commission") {
@@ -658,7 +724,7 @@ const ProductsTable = ({ refreshToken = 0, isSellerView = false }) => {
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
           {/* 🟩 FILA 1 (sm–lg: full width, xl: queda a la izquierda) */}
           <Input
-            placeholder="Buscar por producto o marca..."
+            placeholder="Buscar por producto, marca o SKU..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full xl:w-80"
@@ -784,6 +850,14 @@ const ProductsTable = ({ refreshToken = 0, isSellerView = false }) => {
                       <p className="text-xs text-muted-foreground">
                         {p.brandName} • {p.categoryName}
                       </p>
+                      {getFirstSku(p) && (
+                        <p className="font-mono text-[10px] text-muted-foreground mt-0.5">
+                          {getFirstSku(p)}
+                          {getProductSkus(p).length > 1
+                            ? ` +${getProductSkus(p).length - 1}`
+                            : ""}
+                        </p>
+                      )}
                       <div className="mt-1">
                         <Badge
                           variant="secondary"
@@ -978,6 +1052,10 @@ const ProductsTable = ({ refreshToken = 0, isSellerView = false }) => {
                             : "Por cantidad"}
                         </Badge>
                       </div>
+                    </TableCell>
+
+                    <TableCell>
+                      <SkuCell product={p} />
                     </TableCell>
 
                     <TableCell>

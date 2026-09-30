@@ -12,7 +12,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { IconPlus, IconTrash, IconDeviceFloppy, IconCopy } from "@tabler/icons-react";
+import { Badge } from "@/components/ui/badge";
+import {
+  IconPlus,
+  IconTrash,
+  IconDeviceFloppy,
+  IconCopy,
+  IconPrinter,
+} from "@tabler/icons-react";
+import DialogPrintLabels from "@/components/DialogPrintLabels";
 // ❌ ELIMINADO: import Swal from "sweetalert2";
 
 // ✅ AGREGADO: Sonner para notificaciones
@@ -37,6 +45,7 @@ export default function DialogVariants({ open, onClose, productId, onSave }) {
   const [variants, setVariants] = useState([]);
   const [loading, setLoading] = useState(false);
   const [product, setProduct] = useState(null);
+  const [printOpen, setPrintOpen] = useState(false);
   const isSerialTracked = product?.inventory_tracking_mode === "serial";
 
   const generateVariantName = (variant) => {
@@ -132,31 +141,31 @@ export default function DialogVariants({ open, onClose, productId, onSave }) {
   }, [isOwner, product]);
 
   // Cargar producto y variantes
+  const fetchData = useCallback(async () => {
+    if (!productId) return;
+    setLoading(true);
+
+    const { data: productData } = await supabase
+      .from("products")
+      .select("*, brands(name), categories(name)")
+      .eq("id", productId)
+      .single();
+
+    setProduct(productData || null);
+
+    const { data: variantsData } = await supabase
+      .from("product_variants")
+      .select("*")
+      .eq("product_id", productId)
+      .order("id", { ascending: true });
+
+    setVariants(variantsData || []);
+    setLoading(false);
+  }, [productId]);
+
   useEffect(() => {
-    const fetchData = async () => {
-      if (!productId) return;
-      setLoading(true);
-
-      const { data: productData } = await supabase
-        .from("products")
-        .select("*, brands(name), categories(name)")
-        .eq("id", productId)
-        .single();
-
-      setProduct(productData || null);
-
-      const { data: variantsData } = await supabase
-        .from("product_variants")
-        .select("*")
-        .eq("product_id", productId)
-        .order("id", { ascending: true });
-
-      setVariants(variantsData || []);
-      setLoading(false);
-    };
-
     if (open) fetchData();
-  }, [open, productId]);
+  }, [open, fetchData]);
 
   const UPPERCASE_FIELDS = [
     "variant_name", "color", "storage", "storage_capacity", "storage_type",
@@ -188,6 +197,7 @@ export default function DialogVariants({ open, onClose, productId, onSave }) {
         product_id: productId,
         variant_name: "",
         variant_name_manual: false,
+        sku: "",
         storage: "",
         ram: "",
         color: "",
@@ -253,6 +263,7 @@ export default function DialogVariants({ open, onClose, productId, onSave }) {
     const duplicate = {
       ...source,
       id: undefined,
+      sku: "",
       color: "",
       usd_price: "",
       wholesale_price: 0,
@@ -282,8 +293,16 @@ export default function DialogVariants({ open, onClose, productId, onSave }) {
       return;
     }
 
-    const cleanForInsert = ({ variant_name_manual, id, ...rest }) => rest;
-    const cleanForUpdate = ({ variant_name_manual, ...rest }) => rest;
+    // sku vacio se manda como NULL: el trigger de BD genera el codigo.
+    const normalizeSku = (variant) => ({
+      ...variant,
+      sku: String(variant.sku || "").trim() || null,
+    });
+
+    const cleanForInsert = ({ variant_name_manual, id, ...rest }) =>
+      normalizeSku(rest);
+    const cleanForUpdate = ({ variant_name_manual, ...rest }) =>
+      normalizeSku(rest);
     const inserts = variants.filter((v) => !v.id).map(cleanForInsert);
     const updates = variants.filter((v) => v.id).map(cleanForUpdate);
 
@@ -308,6 +327,17 @@ export default function DialogVariants({ open, onClose, productId, onSave }) {
 
       if (updateError) {
         throw new Error("Error al actualizar variantes existentes.");
+      }
+
+      // El trigger de BD genera el SKU en los INSERT, pero no en los UPDATE.
+      // Este RPC completa cualquier variante del producto que siga sin SKU.
+      const { error: skuError } = await supabase.rpc(
+        "rpc_generate_skus_for_product",
+        { p_product_id: productId }
+      );
+
+      if (skuError) {
+        console.warn("No se pudieron generar algunos SKU:", skuError);
       }
     };
 
@@ -339,6 +369,7 @@ export default function DialogVariants({ open, onClose, productId, onSave }) {
   };
 
   return (
+    <>
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-3xl w-[90vw] max-h-[85svh] overflow-y-auto">
         <DialogHeader>
@@ -386,15 +417,26 @@ export default function DialogVariants({ open, onClose, productId, onSave }) {
             )}
 
             <div className="space-y-4">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2">
                 <h4 className="text-sm font-medium">
                   {variants.length} variante
                   {variants.length !== 1 ? "s" : ""} configurada
                   {variants.length !== 1 ? "s" : ""}
                 </h4>
-                <Button variant="outline" onClick={addVariant} size="sm">
-                  <IconPlus className="h-4 w-4 mr-2" /> Nueva variante
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPrintOpen(true)}
+                    disabled={!variants.some((v) => String(v.sku || "").trim())}
+                    title="Imprimir etiquetas con codigo de barras"
+                  >
+                    <IconPrinter className="h-4 w-4 mr-2" /> Etiquetas
+                  </Button>
+                  <Button variant="outline" onClick={addVariant} size="sm">
+                    <IconPlus className="h-4 w-4 mr-2" /> Nueva variante
+                  </Button>
+                </div>
               </div>
 
               <div className="space-y-3">
@@ -403,11 +445,26 @@ export default function DialogVariants({ open, onClose, productId, onSave }) {
                     key={index}
                     className="border rounded-lg p-4 bg-card hover:border-primary/50 transition-colors space-y-4"
                   >
-                    {/* Nombre de variante (manual o generado) */}
+                    {/* Nombre de variante (manual o generado) + SKU */}
                     <div className="grid gap-2">
-                      <Label htmlFor={`variant-name-${index}`}>
-                        Nombre de variante
-                      </Label>
+                      <div className="flex items-center justify-between gap-2">
+                        <Label htmlFor={`variant-name-${index}`}>
+                          Nombre de variante
+                        </Label>
+                        {String(v.sku || "").trim() ? (
+                          <Badge
+                            variant="outline"
+                            className="font-mono text-xs tracking-tight"
+                            title="Codigo identificador unico de la variante"
+                          >
+                            {v.sku}
+                          </Badge>
+                        ) : (
+                          <Badge variant="secondary" className="text-xs font-normal">
+                            SKU se genera al guardar
+                          </Badge>
+                        )}
+                      </div>
                       <Input
                         id={`variant-name-${index}`}
                         placeholder="ej: 256GB / 8GB"
@@ -774,5 +831,13 @@ export default function DialogVariants({ open, onClose, productId, onSave }) {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+
+    <DialogPrintLabels
+      open={printOpen}
+      onClose={() => setPrintOpen(false)}
+      productName={product?.name || ""}
+      variants={variants}
+    />
+    </>
   );
 }

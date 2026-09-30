@@ -375,6 +375,17 @@ export default function ProductDetailDialog({
                         }`}
                     >
                       <div className="flex flex-col gap-1.5">
+                        {v.sku && (
+                          <div className="flex justify-start pr-16 -mt-1 mb-0.5">
+                            <span
+                              className="font-mono text-[10px] px-1.5 py-0.5 rounded border bg-muted/40 tracking-tight"
+                              title="Codigo identificador de la variante"
+                            >
+                              {v.sku}
+                            </span>
+                          </div>
+                        )}
+
                         {displayFields.map((field) => {
                           const value = v[field];
                           if (!value) return null;
