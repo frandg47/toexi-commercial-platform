@@ -837,6 +837,7 @@ export default function DialogVariants({ open, onClose, productId, onSave }) {
       onClose={() => setPrintOpen(false)}
       productName={product?.name || ""}
       variants={variants}
+      isSerialTracked={isSerialTracked}
     />
     </>
   );

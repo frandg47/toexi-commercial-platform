@@ -252,10 +252,11 @@ const printHtml = (html) =>
   });
 
 /**
- * Imprime etiquetas con codigo de barras para variantes.
+ * Imprime etiquetas con codigo de barras.
  *
  * @param {Array} items [{ sku, productName, variantName, copies }]
- * @param {Object} options { sizeId, copies, showProduct, showVariant }
+ * @param {Object} options { sizeId, copies, showProduct, showVariant, labelType }
+ *   labelType: "sku" (default) o "imei" — solo afecta el mensaje de error.
  */
 export async function printVariantLabels(items, options = {}) {
   const valid = (items || []).filter(
@@ -263,7 +264,11 @@ export async function printVariantLabels(items, options = {}) {
   );
 
   if (valid.length === 0) {
-    toast.error("No hay variantes con SKU para imprimir");
+    toast.error(
+      options.labelType === "imei"
+        ? "No hay unidades IMEI seleccionadas para imprimir"
+        : "No hay variantes con SKU para imprimir"
+    );
     return false;
   }
 
