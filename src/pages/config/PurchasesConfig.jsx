@@ -143,6 +143,29 @@ const parseIdentifiers = (value) =>
 const isSerialTrackedVariant = (variant) =>
   variant?.products?.inventory_tracking_mode === "serial";
 
+const UNIT_STATUS_LABELS = {
+  sold: "vendida",
+  reserved: "reservada",
+  defective: "defectuosa",
+  in_repair: "en reparacion",
+  returned_available: "devuelta",
+  returned_defective: "devuelta defectuosa",
+  warranty_hold: "en garantia",
+  voided: "anulada",
+};
+
+const isActiveUnitStatus = (status) =>
+  status === "available" || status === "reentered";
+
+const getInactiveUnitSummary = (units) => {
+  const others = (units || []).filter((u) => !isActiveUnitStatus(u.status));
+  if (others.length === 0) return null;
+  const labels = [
+    ...new Set(others.map((u) => UNIT_STATUS_LABELS[u.status] || u.status)),
+  ];
+  return { count: others.length, labels };
+};
+
 const PurchasesConfig = () => {
   const { role } = useAuth();
   const isOwner = role?.toLowerCase() === "owner";
@@ -526,12 +549,22 @@ const PurchasesConfig = () => {
         const { data: existingUnits } = await supabase
           .from("inventory_units")
           .select(
-            "id, identifier_value, identifier_normalized, status, sale_id, sale:sales(id, sale_date, customers(name, last_name))",
+            "id, identifier_value, identifier_normalized, status, sale_id, purchase_item_id, sale:sales(id, sale_date, customers(name, last_name))",
           )
           .in("identifier_normalized", normalizedList);
 
+        const linkedItemIds = new Set(
+          items
+            .filter((i) => i._purchaseItemId)
+            .map((i) => i._purchaseItemId),
+        );
         const soldUnits = (existingUnits || []).filter(
-          (u) => u.status === "sold",
+          (u) =>
+            u.status === "sold" &&
+            !(
+              u.purchase_item_id != null &&
+              linkedItemIds.has(u.purchase_item_id)
+            ),
         );
         if (soldUnits.length > 0) {
           setReentrySoldUnits(soldUnits);
@@ -631,72 +664,175 @@ const PurchasesConfig = () => {
   };
 
   const handleSaveEdit = async (currency, rate) => {
-    const { data: originalItems } = await supabase
+    const { data: originalItems, error: originalError } = await supabase
       .from("purchase_items")
-      .select("id, variant_id, quantity, product_variants(products(inventory_tracking_mode))")
+      .select(
+        "id, variant_id, quantity, product_variants(variant_name, color, products(name, inventory_tracking_mode))",
+      )
       .eq("purchase_id", editingPurchaseId);
 
-    const originalIds = new Set(
-      (originalItems || []).map((i) => i.id),
-    );
+    if (originalError) {
+      toast.error("No se pudieron cargar los productos de la compra", {
+        description: originalError.message,
+      });
+      return;
+    }
+
+    const originalIds = new Set((originalItems || []).map((i) => i.id));
     const currentIds = new Set(
       items.filter((i) => i._purchaseItemId).map((i) => i._purchaseItemId),
     );
 
-    for (const origId of originalIds) {
-      if (!currentIds.has(origId)) {
-        const origItem = (originalItems || []).find((i) => i.id === origId);
-        const isSerial =
-          origItem?.product_variants?.products?.inventory_tracking_mode ===
-          "serial";
+    const stockDeltas = new Map();
+    const bumpStock = (variantId, delta) => {
+      if (!delta) return;
+      stockDeltas.set(variantId, (stockDeltas.get(variantId) || 0) + delta);
+    };
+    const receivedAt = form.purchase_date + "T00:00:00-03:00";
 
-        if (isSerial) {
-          const { count } = await supabase
+    const addUnitsToItem = async ({
+      variantId,
+      purchaseItemId,
+      identifiers,
+    }) => {
+      if (identifiers.length === 0) return { added: 0 };
+      const norms = identifiers.map((id) => normalizeIdentifier(id));
+      const { data: conflicts, error: conflictError } = await supabase
+        .from("inventory_units")
+        .select("id, identifier_normalized, status")
+        .in("identifier_normalized", norms);
+      if (conflictError) return { error: conflictError.message };
+
+      const conflictMap = new Map(
+        (conflicts || []).map((c) => [c.identifier_normalized, c]),
+      );
+      const blocking = identifiers.find((id) => {
+        const conflict = conflictMap.get(normalizeIdentifier(id));
+        return conflict && conflict.status !== "sold";
+      });
+      if (blocking) {
+        return { error: `El IMEI/SN ${blocking} ya existe en el sistema` };
+      }
+
+      let added = 0;
+      for (const identifier of identifiers) {
+        const norm = normalizeIdentifier(identifier);
+        const conflict = conflictMap.get(norm);
+        if (conflict) {
+          const { error } = await supabase
             .from("inventory_units")
-            .select("id", { count: "exact", head: true })
-            .eq("purchase_item_id", origId)
-            .in("status", ["available", "reentered"]);
-
-          if (count > 0) {
-            const { data: variant } = await supabase
-              .from("product_variants")
-              .select("stock")
-              .eq("id", origItem.variant_id)
-              .single();
-            if (variant) {
-              await supabase
-                .from("product_variants")
-                .update({ stock: Math.max((variant.stock || 0) - count, 0) })
-                .eq("id", origItem.variant_id);
-            }
-          }
-
-          await supabase
-            .from("inventory_units")
-            .delete()
-            .eq("purchase_item_id", origId);
+            .update({
+              variant_id: variantId,
+              purchase_id: editingPurchaseId,
+              purchase_item_id: purchaseItemId,
+              status: "reentered",
+              sale_id: null,
+              sale_item_id: null,
+              sold_at: null,
+              returned_at: null,
+              received_at: receivedAt,
+              notes: "Reingreso por compra",
+            })
+            .eq("id", conflict.id);
+          if (error) return { error: error.message };
         } else {
-          const { data: variant } = await supabase
-            .from("product_variants")
-            .select("stock")
-            .eq("id", origItem.variant_id)
-            .single();
-          if (variant) {
-            await supabase
-              .from("product_variants")
-              .update({
-                stock: Math.max(
-                  (variant.stock || 0) - (origItem.quantity || 0),
-                  0,
-                ),
-              })
-              .eq("id", origItem.variant_id);
-          }
+          const { error } = await supabase.from("inventory_units").insert({
+            variant_id: variantId,
+            purchase_item_id: purchaseItemId,
+            identifier_value: identifier,
+            identifier_normalized: norm,
+            status: "available",
+            received_at: receivedAt,
+          });
+          if (error) return { error: error.message };
         }
+        added++;
+      }
+      return { added };
+    };
 
-        await supabase.from("purchase_items").delete().eq("id", origId);
+    const getSerialUnits = async (purchaseItemId) => {
+      const { data, error } = await supabase
+        .from("inventory_units")
+        .select("id, identifier_normalized, status")
+        .eq("purchase_item_id", purchaseItemId);
+      if (error) {
+        toast.error("No se pudieron cargar los IMEIs de la compra", {
+          description: error.message,
+        });
+        return null;
+      }
+      return data || [];
+    };
+
+    for (const origId of originalIds) {
+      if (currentIds.has(origId)) continue;
+      const origItem = (originalItems || []).find((i) => i.id === origId);
+      const isSerial =
+        origItem?.product_variants?.products?.inventory_tracking_mode ===
+        "serial";
+      if (!isSerial) continue;
+      const units = await getSerialUnits(origId);
+      if (units === null) return;
+      const locked = units.filter((u) => !isActiveUnitStatus(u.status));
+      if (locked.length > 0) {
+        const variantLabel = [
+          origItem?.product_variants?.products?.name,
+          origItem?.product_variants?.variant_name,
+          origItem?.product_variants?.color,
+        ]
+          .filter(Boolean)
+          .join(" ");
+        toast.error(
+          `No se puede quitar "${variantLabel || "el producto"}": ${locked.length} unidad/es ya fueron vendidas o modificadas`,
+        );
+        return;
       }
     }
+
+    for (const origId of originalIds) {
+      if (currentIds.has(origId)) continue;
+      const origItem = (originalItems || []).find((i) => i.id === origId);
+      const isSerial =
+        origItem?.product_variants?.products?.inventory_tracking_mode ===
+        "serial";
+
+      if (isSerial) {
+        const units = await getSerialUnits(origId);
+        if (units === null) return;
+        const removableIds = units
+          .filter((u) => isActiveUnitStatus(u.status))
+          .map((u) => u.id);
+        if (removableIds.length > 0) {
+          const { error: unitDeleteError } = await supabase
+            .from("inventory_units")
+            .delete()
+            .in("id", removableIds);
+          if (unitDeleteError) {
+            toast.error("No se pudieron quitar los IMEIs", {
+              description: unitDeleteError.message,
+            });
+            return;
+          }
+          bumpStock(origItem.variant_id, -removableIds.length);
+        }
+      } else {
+        bumpStock(origItem.variant_id, -(origItem.quantity || 0));
+      }
+
+      const { error: itemDeleteError } = await supabase
+        .from("purchase_items")
+        .delete()
+        .eq("id", origId);
+      if (itemDeleteError) {
+        toast.error("No se pudo quitar el producto de la compra", {
+          description: itemDeleteError.message,
+        });
+        return;
+      }
+    }
+
+    const serialChecks = [];
 
     for (const item of items) {
       const qty = Number(item.quantity || 0);
@@ -711,100 +847,76 @@ const PurchasesConfig = () => {
         if (origItem && !isSerial) {
           const qtyDiff = qty - (origItem.quantity || 0);
           if (qtyDiff !== 0) {
-            const { data: variant } = await supabase
-              .from("product_variants")
-              .select("stock")
-              .eq("id", item.variant_id)
-              .single();
-            if (variant) {
-              const newStock = Math.max((variant.stock || 0) + qtyDiff, 0);
-              await supabase
-                .from("product_variants")
-                .update({ stock: newStock })
-                .eq("id", item.variant_id);
-            }
+            bumpStock(item.variant_id, qtyDiff);
           }
         }
 
-        await supabase
+        const { error: updateError } = await supabase
           .from("purchase_items")
           .update({ quantity: qty, unit_cost: cost, subtotal })
           .eq("id", item._purchaseItemId);
+        if (updateError) {
+          toast.error("No se pudo actualizar el producto", {
+            description: updateError.message,
+          });
+          return;
+        }
 
         if (isSerial) {
-          const { data: currentSerials } = await supabase
-            .from("inventory_units")
-            .select("id, identifier_value, identifier_normalized")
-            .eq("purchase_item_id", item._purchaseItemId)
-            .in("status", ["available", "reentered"]);
+          serialChecks.push({
+            purchaseItemId: item._purchaseItemId,
+            quantity: qty,
+          });
 
-          const currentMap = new Map(
-            (currentSerials || []).map((s) => [
-              s.identifier_normalized,
-              s,
-            ]),
-          );
+          const linkedUnits = await getSerialUnits(item._purchaseItemId);
+          if (linkedUnits === null) return;
 
           const newIdentifiers = parseIdentifiers(item.identifiersText);
           const newNormalized = new Set(
             newIdentifiers.map((id) => normalizeIdentifier(id)),
           );
 
-          for (const [norm, serial] of currentMap) {
-            if (!newNormalized.has(norm)) {
-              await supabase.from("inventory_units").delete().eq("id", serial.id);
-            }
-          }
-
-          const existingNormalized = new Set(currentMap.keys());
           const toAdd = newIdentifiers.filter(
-            (id) => !existingNormalized.has(normalizeIdentifier(id)),
+            (id) =>
+              !linkedUnits.some(
+                (u) => u.identifier_normalized === normalizeIdentifier(id),
+              ),
           );
-
           if (toAdd.length > 0) {
-            const v_received_at =
-              form.purchase_date + "T00:00:00-03:00";
-            for (const identifier of toAdd) {
-              await supabase.from("inventory_units").insert({
-                variant_id: item.variant_id,
-                purchase_item_id: item._purchaseItemId,
-                identifier_value: identifier,
-                identifier_normalized: normalizeIdentifier(identifier),
-                status: "available",
-                received_at: v_received_at,
+            const result = await addUnitsToItem({
+              variantId: item.variant_id,
+              purchaseItemId: item._purchaseItemId,
+              identifiers: toAdd,
+            });
+            if (result.error) {
+              toast.error("No se pudieron registrar los IMEIs", {
+                description: result.error,
               });
+              return;
             }
-
-            const { data: variant } = await supabase
-              .from("product_variants")
-              .select("stock")
-              .eq("id", item.variant_id)
-              .single();
-            if (variant) {
-              await supabase
-                .from("product_variants")
-                .update({ stock: (variant.stock || 0) + toAdd.length })
-                .eq("id", item.variant_id);
-            }
+            bumpStock(item.variant_id, result.added);
           }
 
-          const removedCount = (currentSerials || []).filter(
-            (s) => !newNormalized.has(s.identifier_normalized),
-          ).length;
-          if (removedCount > 0) {
-            const { data: variant } = await supabase
-              .from("product_variants")
-              .select("stock")
-              .eq("id", item.variant_id)
-              .single();
-            if (variant) {
-              await supabase
-                .from("product_variants")
-                .update({
-                  stock: Math.max((variant.stock || 0) - removedCount, 0),
-                })
-                .eq("id", item.variant_id);
+          const removable = linkedUnits.filter(
+            (u) =>
+              isActiveUnitStatus(u.status) &&
+              !newNormalized.has(u.identifier_normalized),
+          );
+          if (removable.length > 0) {
+            const { error: deleteError } = await supabase
+              .from("inventory_units")
+              .delete()
+              .in(
+                "id",
+                removable.map((u) => u.id),
+              );
+            if (deleteError) {
+              toast.error("No se pudieron quitar los IMEIs", {
+                description: deleteError.message,
+              });
+              return;
             }
+            bumpStock(item.variant_id, -removable.length);
           }
         }
       } else {
@@ -828,50 +940,39 @@ const PurchasesConfig = () => {
         }
 
         if (isSerial) {
+          serialChecks.push({ purchaseItemId: newItem.id, quantity: qty });
           const identifiers = parseIdentifiers(item.identifiersText);
           if (identifiers.length > 0) {
-            const v_received_at =
-              form.purchase_date + "T00:00:00-03:00";
-
-            for (const identifier of identifiers) {
-              const identifierNormalized = normalizeIdentifier(identifier);
-              await supabase.from("inventory_units").insert({
-                variant_id: item.variant_id,
-                purchase_item_id: newItem.id,
-                identifier_value: identifier,
-                identifier_normalized: identifierNormalized,
-                status: "available",
-                received_at: v_received_at,
+            const result = await addUnitsToItem({
+              variantId: item.variant_id,
+              purchaseItemId: newItem.id,
+              identifiers,
+            });
+            if (result.error) {
+              toast.error("No se pudieron registrar los IMEIs", {
+                description: result.error,
               });
+              return;
             }
-
-            const { data: variant } = await supabase
-              .from("product_variants")
-              .select("stock")
-              .eq("id", item.variant_id)
-              .single();
-
-            if (variant) {
-              await supabase
-                .from("product_variants")
-                .update({ stock: (variant.stock || 0) + identifiers.length })
-                .eq("id", item.variant_id);
-            }
+            bumpStock(item.variant_id, result.added);
           }
         } else {
-          const { data: variant } = await supabase
-            .from("product_variants")
-            .select("stock")
-            .eq("id", item.variant_id)
-            .single();
-          if (variant) {
-            await supabase
-              .from("product_variants")
-              .update({ stock: (variant.stock || 0) + qty })
-              .eq("id", item.variant_id);
-          }
+          bumpStock(item.variant_id, qty);
         }
       }
+    }
+
+    for (const [variantId, delta] of stockDeltas) {
+      const { data: variant } = await supabase
+        .from("product_variants")
+        .select("stock")
+        .eq("id", variantId)
+        .maybeSingle();
+      if (!variant) continue;
+      await supabase
+        .from("product_variants")
+        .update({ stock: Math.max((variant.stock || 0) + delta, 0) })
+        .eq("id", variantId);
     }
 
     const newTotal = items.reduce(
@@ -900,6 +1001,36 @@ const PurchasesConfig = () => {
       return;
     }
 
+    const { data: freshPayments } = await supabase
+      .from("purchase_payments")
+      .select("amount_ars")
+      .eq("purchase_id", editingPurchaseId);
+    const paidArs = (freshPayments || []).reduce(
+      (acc, p) => acc + Number(p.amount_ars || 0),
+      0,
+    );
+    if (Math.abs(paidArs - newTotalArs) <= 0.01) {
+      let allSerialsDone = true;
+      for (const check of serialChecks) {
+        const { count } = await supabase
+          .from("inventory_units")
+          .select("id", { count: "exact", head: true })
+          .eq("purchase_item_id", check.purchaseItemId)
+          .in("status", ["available", "reentered"]);
+        if (count !== check.quantity) {
+          allSerialsDone = false;
+          break;
+        }
+      }
+      if (allSerialsDone) {
+        await supabase
+          .from("purchases")
+          .update({ status: "completed" })
+          .eq("id", editingPurchaseId)
+          .neq("status", "completed");
+      }
+    }
+
     toast.success("Compra actualizada");
     setEditingPurchaseId(null);
     setEditingPurchase(null);
@@ -915,7 +1046,11 @@ const PurchasesConfig = () => {
     const { currency, rate } = pendingSavePayload || {};
     setPendingSavePayload(null);
 
-    await handleSaveCreate(currency, rate);
+    if (editingPurchaseId) {
+      await handleSaveEdit(currency, rate);
+    } else {
+      await handleSaveCreate(currency, rate);
+    }
   };
 
   const openPurchaseDetail = async (purchase) => {
@@ -1019,16 +1154,21 @@ const PurchasesConfig = () => {
         ) {
           return { ...item, enteredSerials: [], pendingCount: 0 };
         }
-        const { data: serials } = await supabase
+        const { data: serials, error: serialsError } = await supabase
           .from("inventory_units")
-          .select("id, identifier_value")
-          .eq("purchase_item_id", item.id)
-          .in("status", ["available", "reentered"]);
+          .select("id, identifier_value, status")
+          .eq("purchase_item_id", item.id);
+        if (serialsError) {
+          toast.error("No se pudieron cargar los IMEIs", {
+            description: serialsError.message,
+          });
+          return { ...item, enteredSerials: [], pendingCount: item.quantity };
+        }
         const entered = serials || [];
         return {
           ...item,
           enteredSerials: entered,
-          pendingCount: item.quantity - entered.length,
+          pendingCount: Math.max(item.quantity - entered.length, 0),
         };
       }),
     );
@@ -1071,25 +1211,35 @@ const PurchasesConfig = () => {
       return;
     }
 
-    const itemsWithSerials = await Promise.all(
-      (purchaseItems || []).map(async (pi) => {
-        const isSerial =
-          pi.product_variants?.products?.inventory_tracking_mode === "serial";
-        if (!isSerial) {
-          return { ...pi, identifiersText: "" };
-        }
-        const { data: serials } = await supabase
-          .from("inventory_units")
-          .select("identifier_value")
-          .eq("purchase_item_id", pi.id)
-          .in("status", ["available", "reentered"]);
-        const identifiers = (serials || []).map((s) => s.identifier_value);
-        return {
-          ...pi,
-          identifiersText: identifiers.join("\n"),
-        };
-      }),
-    );
+    let itemsWithSerials;
+    try {
+      itemsWithSerials = await Promise.all(
+        (purchaseItems || []).map(async (pi) => {
+          const isSerial =
+            pi.product_variants?.products?.inventory_tracking_mode ===
+            "serial";
+          if (!isSerial) {
+            return { ...pi, identifiersText: "", _linkedUnits: [] };
+          }
+          const { data: serials, error: serialsError } = await supabase
+            .from("inventory_units")
+            .select("identifier_value, status")
+            .eq("purchase_item_id", pi.id);
+          if (serialsError) throw serialsError;
+          const linked = serials || [];
+          return {
+            ...pi,
+            identifiersText: linked.map((s) => s.identifier_value).join("\n"),
+            _linkedUnits: linked,
+          };
+        }),
+      );
+    } catch (err) {
+      toast.error("No se pudieron cargar los IMEIs de la compra", {
+        description: err.message,
+      });
+      return;
+    }
 
     setForm({
       provider_id: String(purchase.provider_id),
@@ -1107,6 +1257,7 @@ const PurchasesConfig = () => {
         quantity: pi.quantity,
         unit_cost: pi.unit_cost,
         identifiersText: pi.identifiersText,
+        _linkedUnits: pi._linkedUnits || [],
         _purchaseItemId: pi.id,
       })),
     );
@@ -1141,6 +1292,20 @@ const PurchasesConfig = () => {
     () => completeItems.filter((item) => item.pendingCount > 0),
     [completeItems],
   );
+
+  const completePendingUnits = useMemo(
+    () =>
+      completePendingSerials.reduce(
+        (acc, item) => acc + Number(item.pendingCount || 0),
+        0,
+      ),
+    [completePendingSerials],
+  );
+
+  const completeLiveComplete =
+    completeRemainingArs <= 0.01 && completePendingSerials.length === 0;
+  const completeStatusDone = completingPurchase?.status === "completed";
+  const completeInconsistent = completeStatusDone && !completeLiveComplete;
 
   const handleAddCompletePayment = async () => {
     const validPayments = completePayments.filter(
@@ -1768,6 +1933,22 @@ const PurchasesConfig = () => {
                               Cargados:{" "}
                               {parseIdentifiers(item.identifiersText).length} /{" "}
                               {Number(item.quantity || 0)}
+                              {(() => {
+                                const summary = getInactiveUnitSummary(
+                                  item._linkedUnits,
+                                );
+                                if (!summary) return null;
+                                return (
+                                  <span className="text-amber-600">
+                                    {" "}
+                                    — {summary.count} ya no{" "}
+                                    {summary.count === 1
+                                      ? "esta disponible"
+                                      : "estan disponibles"}{" "}
+                                    ({summary.labels.join(", ")})
+                                  </span>
+                                );
+                              })()}
                             </div>
                           </div>
                         </TableCell>
@@ -2143,7 +2324,7 @@ const PurchasesConfig = () => {
               </div>
             )}
 
-            {!completeLoading && completingPurchase?.status === "completed" && (
+            {!completeLoading && completeStatusDone && completeLiveComplete && (
               <div className="rounded-md border border-emerald-200 bg-emerald-50 p-4 text-center">
                 <div className="text-sm font-medium text-emerald-700">
                   Esta compra esta completa
@@ -2154,7 +2335,26 @@ const PurchasesConfig = () => {
               </div>
             )}
 
-            {!completeLoading && completingPurchase?.status !== "completed" && (
+            {!completeLoading && completeInconsistent && (
+              <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-center">
+                <div className="text-sm font-medium text-amber-700">
+                  Esta compra figura como completada, pero hay pendientes
+                </div>
+                <div className="text-xs text-amber-600 mt-1">
+                  {completePendingUnits > 0
+                    ? `${completePendingUnits} IMEIs sin registrar`
+                    : ""}
+                  {completePendingUnits > 0 && completeRemainingArs > 0.01
+                    ? " — "
+                    : ""}
+                  {completeRemainingArs > 0.01
+                    ? `Faltan ${formatARS(completeRemainingArs)} de pago`
+                    : ""}
+                </div>
+              </div>
+            )}
+
+            {!completeLoading && !(completeStatusDone && completeLiveComplete) && (
               <>
                 {completeRemainingArs > 0.01 && (
                   <div className="space-y-3 rounded-md border p-4">
