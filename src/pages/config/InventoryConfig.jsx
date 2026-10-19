@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabaseClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -214,10 +214,40 @@ export default function InventoryConfig() {
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [activeTab, setActiveTab] = useState("units");
 
+  const variantsRef = useRef([]);
+  useEffect(() => {
+    variantsRef.current = variants;
+  }, [variants]);
+
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(searchTerm), 300);
     return () => clearTimeout(timer);
   }, [searchTerm]);
+
+  // PostgREST/Supabase limita por defecto las respuestas a 1000 filas.
+  // Este helper pagina hasta traer todas las unidades para los conteos.
+  const fetchAllInventoryUnitsForCount = useCallback(async () => {
+    const pageSize = 1000;
+    const maxPages = 50;
+    const allRows = [];
+
+    for (let page = 0; page < maxPages; page += 1) {
+      const fromRow = page * pageSize;
+      const { data, error } = await supabase
+        .from("inventory_units")
+        .select("variant_id, status")
+        .range(fromRow, fromRow + pageSize - 1);
+
+      if (error) {
+        return { data: null, error };
+      }
+
+      allRows.push(...(data || []));
+      if (!data || data.length < pageSize) break;
+    }
+
+    return { data: allRows, error: null };
+  }, []);
 
   const fetchInventoryData = useCallback(
     async (loadUnits = true) => {
@@ -244,27 +274,81 @@ export default function InventoryConfig() {
                   .order("identifier_value", {
                     ascending: true,
                     nullsFirst: false,
-                  })
-                  .range(from, to);
+                  });
 
                 if (filters.unitStatus !== "all") {
                   query = query.eq("status", filters.unitStatus);
                 }
 
-                if (!debouncedSearch) {
-                  query = query.range(from, to);
+                if (debouncedSearch) {
+                  // La busqueda se resuelve en el servidor para que alcance
+                  // todas las paginas, no solo las filas ya cargadas.
+                  const searchOrParts = [];
+                  // Se neutralizan caracteres que rompen la sintaxis del filtro .or()
+                  const term = debouncedSearch.replace(/[,()%]/g, " ").trim();
+                  const normalizedTerm = normalizeIdentifierKey(debouncedSearch);
+
+                  if (term) {
+                    searchOrParts.push(`identifier_value.ilike.%${term}%`);
+                  }
+                  if (normalizedTerm) {
+                    searchOrParts.push(
+                      `identifier_normalized.ilike.%${normalizedTerm}%`,
+                    );
+                  }
+
+                  const searchQuery = normalizeText(debouncedSearch);
+                  const matchingVariantIds = variantsRef.current
+                    .filter((variant) => {
+                      const searchable = normalizeText(
+                        [
+                          variant.products?.name,
+                          variant.variant_name,
+                          variant.color,
+                          variant.storage,
+                          variant.ram,
+                          variant.products?.brands?.name,
+                        ]
+                          .filter(Boolean)
+                          .join(" "),
+                      );
+                      return searchable.includes(searchQuery);
+                    })
+                    .map((variant) => variant.id);
+
+                  // Limite defensivo para no generar URLs gigantes con terminos genericos.
+                  if (
+                    matchingVariantIds.length > 0 &&
+                    matchingVariantIds.length <= 500
+                  ) {
+                    searchOrParts.push(
+                      `variant_id.in.(${matchingVariantIds.join(",")})`,
+                    );
+                  }
+
+                  if (searchOrParts.length > 0) {
+                    query = query.or(searchOrParts.join(","));
+                  }
                 }
 
-                return query;
+                // PostgREST aplica los filtros antes de paginar, asi que el
+                // rango pagina sobre el resultado de la busqueda.
+                return query.range(from, to);
               })()
             : Promise.resolve({ data: units, count: unitsTotalCount }),
-          supabase
-            .from("inventory_units")
-            .select("id, variant_id, status", { count: "exact" }),
+          fetchAllInventoryUnitsForCount(),
         ]);
 
-      if (variantsResponse.error || unitsResponse.error) {
-        console.error(variantsResponse.error || unitsResponse.error);
+      if (
+        variantsResponse.error ||
+        unitsResponse.error ||
+        allUnitsResponse.error
+      ) {
+        console.error(
+          variantsResponse.error ||
+            unitsResponse.error ||
+            allUnitsResponse.error,
+        );
         toast.error("Error", {
           description: "No se pudo cargar la nueva seccion de inventario.",
         });
@@ -293,7 +377,7 @@ export default function InventoryConfig() {
       setRefreshing(false);
       setLoading(false);
     },
-    [unitsPage, unitsPageSize, filters.unitStatus, debouncedSearch],
+    [unitsPage, unitsPageSize, filters.unitStatus, debouncedSearch, fetchAllInventoryUnitsForCount],
   );
 
   useEffect(() => {
@@ -304,10 +388,6 @@ export default function InventoryConfig() {
     setUnitsPage(1);
     setSummaryPage(1);
   }, [debouncedSearch, filters.unitStatus]);
-
-  useEffect(() => {
-    fetchInventoryData(true);
-  }, [unitsPage, debouncedSearch]);
 
   const openHistory = useCallback(async (unit) => {
     if (!unit?.id) return;
@@ -471,26 +551,6 @@ export default function InventoryConfig() {
     const from = (summaryPage - 1) * summaryPageSize;
     return summaryRows.slice(from, from + summaryPageSize);
   }, [summaryRows, summaryPage, summaryPageSize]);
-
-  const filteredUnits = useMemo(() => {
-    if (!debouncedSearch) return units;
-    const query = normalizeText(debouncedSearch);
-    return units.filter((unit) => {
-      const searchable = normalizeText([
-        unit.identifier_value,
-        unit.variant?.products?.name,
-        unit.variant?.variant_name,
-        unit.variant?.color,
-        unit.variant?.storage,
-        unit.variant?.ram,
-        unit.variant?.products?.brands?.name,
-      ].filter(Boolean).join(" "));
-      return searchable.includes(query);
-    });
-  }, [units, debouncedSearch]);
-
-  const effectiveUnitsCount = debouncedSearch ? filteredUnits.length : unitsTotalCount;
-  const effectiveUnitsPage = debouncedSearch ? 1 : unitsPage;
 
   const openSerialLoadDialog = useCallback((variant) => {
     setSerialLoadVariant(variant);
@@ -1264,7 +1324,7 @@ export default function InventoryConfig() {
                 <div className="py-10 text-sm text-muted-foreground">
                   Cargando unidades...
                 </div>
-              ) : filteredUnits.length === 0 ? (
+              ) : units.length === 0 ? (
                 <div className="py-10 text-sm text-muted-foreground">
                   No hay unidades que coincidan con los filtros actuales.
                 </div>
@@ -1285,7 +1345,7 @@ export default function InventoryConfig() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {filteredUnits.map((unit) => (
+                      {units.map((unit) => (
                         <TableRow key={unit.id}>
                           <TableCell>
                             <div className="space-y-1">
@@ -1429,50 +1489,46 @@ export default function InventoryConfig() {
                   </Table>
                   <div className="flex flex-col items-center justify-between gap-3 py-3 sm:flex-row">
                     <div className="text-sm text-muted-foreground">
-                      {debouncedSearch
-                        ? `${filteredUnits.length} resultado(s)`
-                        : unitsTotalCount > 0
-                          ? `Mostrando ${units.length} de ${unitsTotalCount} unidades`
-                          : `${unitsTotalCount} unidades en total`}
+                      {unitsTotalCount > 0
+                        ? `Mostrando ${units.length} de ${unitsTotalCount} unidades`
+                        : `${unitsTotalCount} unidades en total`}
                     </div>
-                    {!debouncedSearch && (
-                      <div className="flex items-center gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setUnitsPage((p) => Math.max(1, p - 1))}
-                          disabled={unitsPage <= 1 || loading}
-                        >
-                          Anterior
-                        </Button>
-                        <div className="text-sm">
-                          {unitsPage} /{" "}
-                          {Math.max(
-                            1,
-                            Math.ceil(unitsTotalCount / unitsPageSize),
-                          )}
-                        </div>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() =>
-                            setUnitsPage((p) =>
-                              Math.min(
-                                Math.ceil(unitsTotalCount / unitsPageSize),
-                                p + 1,
-                              ),
-                            )
-                          }
-                          disabled={
-                            unitsPage >=
-                              Math.ceil(unitsTotalCount / unitsPageSize) ||
-                            loading
-                          }
-                        >
-                          Siguiente
-                        </Button>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setUnitsPage((p) => Math.max(1, p - 1))}
+                        disabled={unitsPage <= 1 || loading}
+                      >
+                        Anterior
+                      </Button>
+                      <div className="text-sm">
+                        {unitsPage} /{" "}
+                        {Math.max(
+                          1,
+                          Math.ceil(unitsTotalCount / unitsPageSize),
+                        )}
                       </div>
-                    )}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          setUnitsPage((p) =>
+                            Math.min(
+                              Math.ceil(unitsTotalCount / unitsPageSize),
+                              p + 1,
+                            ),
+                          )
+                        }
+                        disabled={
+                          unitsPage >=
+                            Math.ceil(unitsTotalCount / unitsPageSize) ||
+                          loading
+                        }
+                      >
+                        Siguiente
+                      </Button>
+                    </div>
                   </div>
                 </div>
               )}
