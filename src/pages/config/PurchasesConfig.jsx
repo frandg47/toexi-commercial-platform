@@ -1681,7 +1681,7 @@ const PurchasesConfig = () => {
         </div>
       </div>
       <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
-        <DialogContent className="!w-[80vw] !max-w-[90vw] max-h-[85svh] overflow-y-auto rounded-2xl p-4 sm:p-6">
+        <DialogContent className="!w-[auto] !max-w-[90vw] flex max-h-[85vh] flex-col p-4 sm:p-6 overflow-auto">
           <DialogHeader>
             <DialogTitle>
               {editingPurchaseId

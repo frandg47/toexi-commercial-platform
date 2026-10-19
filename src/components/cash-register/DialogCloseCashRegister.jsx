@@ -484,7 +484,7 @@ export default function DialogCloseCashRegister({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="!w-[60vw] !max-w-[90vw] flex max-h-[85vh] flex-col p-4 sm:p-6 overflow-auto">
+      <DialogContent className="!w-[auto] !max-w-[90vw] flex max-h-[85vh] flex-col p-4 sm:p-6 overflow-auto">
         <DialogHeader>
           <DialogTitle>Cerrar Caja Diaria</DialogTitle>
           <DialogDescription>
