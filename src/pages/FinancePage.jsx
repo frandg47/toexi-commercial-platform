@@ -96,6 +96,44 @@ const isMovementPendingAccreditation = (movement) =>
   movement?.available_on &&
   movement.available_on > todayDateKey();
 
+const roundCurrency = (value) => Number(Number(value || 0).toFixed(2));
+
+const chunkArray = (items, size = 100) => {
+  const chunks = [];
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+  return chunks;
+};
+
+const fetchAllPages = async (createQuery) => {
+  const pageSize = 1000;
+  const allRows = [];
+  let from = 0;
+
+  while (true) {
+    const { data, error } = await createQuery(from, from + pageSize - 1);
+    if (error) throw error;
+    if (!data?.length) break;
+
+    allRows.push(...data);
+    if (data.length < pageSize) break;
+    from += pageSize;
+  }
+
+  return allRows;
+};
+
+const fetchRowsForIds = async (ids, createQuery) => {
+  const batches = chunkArray([...new Set(ids.filter(Boolean))]);
+  const results = await Promise.all(
+    batches.map((batch) =>
+      fetchAllPages((from, to) => createQuery(batch, from, to)),
+    ),
+  );
+  return results.flat();
+};
+
 export default function FinancePage() {
   const { role } = useAuth();
   const isOwner = role?.toLowerCase() === "owner";
@@ -348,215 +386,233 @@ export default function FinancePage() {
 
   const loadMonthlyNetIncome = useCallback(async () => {
     setMonthlyNetIncomeLoading(true);
-    const yearStart = `${selectedYear}-01-01`;
-    const nextYearStart = `${selectedYear + 1}-01-01`;
+    try {
+      const yearStart = `${selectedYear}-01-01`;
+      const nextYearStart = `${selectedYear + 1}-01-01`;
 
-    let salesQuery = supabase
-      .from("sales")
-      .select(
-        `
-        id,
-        sale_date,
-        status,
-        total_usd,
-        fx_rate_used,
-        sales_channel_id,
-        sale_type,
-        trade_in_data,
-        lead_id,
-        sale_items(
-          id,
-          quantity,
-          usd_price,
-          cost_price_usd,
-          variant_id
-        )
-      `,
-      )
-      .eq("status", "vendido")
-      .is("voided_at", null)
-      .gte("sale_date", yearStart)
-      .lt("sale_date", nextYearStart);
-
-    if (
-      selectedSalesChannels.length === 1 &&
-      selectedSalesChannels[0] === "none"
-    ) {
-      salesQuery = salesQuery.is("sales_channel_id", null);
-    } else if (selectedSalesChannels.length > 0) {
-      const channelIds = selectedSalesChannels
-        .filter((channelId) => channelId !== "none")
-        .map(Number);
-
-      if (channelIds.length > 0 && selectedSalesChannels.includes("none")) {
-        salesQuery = salesQuery.or(
-          `sales_channel_id.in.(${channelIds.join(",")}),sales_channel_id.is.null`,
-        );
-      } else if (channelIds.length > 0) {
-        salesQuery = salesQuery.in("sales_channel_id", channelIds);
-      }
-    }
-
-    const { data: salesData, error: salesError } = await salesQuery;
-
-    if (salesError) {
-      console.error("Error loading net income:", salesError);
-      toast.error("No se pudieron cargar los ingresos netos", {
-        description: salesError.message,
-      });
-      setMonthlyNetIncomeLoading(false);
-      return;
-    }
-
-    // Obtener el ingreso real acreditado desde account_movements
-    const saleIds = (salesData || []).map((s) => s.id);
-    const saleAccreditedIncome = {};
-    const saleHasPendingMovements = {};
-    const saleFxRateMap = new Map(
-      (salesData || []).map((s) => [s.id, Number(s.fx_rate_used || 0)]),
-    );
-
-    if (saleIds.length > 0) {
-      const { data: paymentsData } = await supabase
-        .from("sale_payments")
-        .select("id, sale_id")
-        .in("sale_id", saleIds);
-
-      const paymentIds = (paymentsData || []).map((p) => p.id);
-
-      if (paymentIds.length > 0) {
-        const { data: incomeMovements } = await supabase
-          .from("account_movements")
+      const salesData = await fetchAllPages((from, to) => {
+        let query = supabase
+          .from("sales")
           .select(
-            "amount, currency, related_id, accreditation_status, available_on",
+            `
+            id,
+            sale_date,
+            status,
+            total_usd,
+            fx_rate_used,
+            sales_channel_id,
+            seller_id,
+            sale_type,
+            trade_in_data,
+            lead_id,
+            sale_items(
+              id,
+              quantity,
+              usd_price,
+              cost_price_usd,
+              commission_pct,
+              commission_fixed,
+              variant_id
+            )
+          `,
           )
-          .eq("type", "income")
-          .in("related_table", ["sale_payments", "sale_payment_history"])
-          .in("related_id", paymentIds);
+          .eq("status", "vendido")
+          .is("voided_at", null)
+          .gte("sale_date", yearStart)
+          .lt("sale_date", nextYearStart);
 
-        const paymentToSale = new Map(
-          (paymentsData || []).map((p) => [p.id, p.sale_id]),
-        );
-        const today = todayDateKey();
+        if (
+          selectedSalesChannels.length === 1 &&
+          selectedSalesChannels[0] === "none"
+        ) {
+          query = query.is("sales_channel_id", null);
+        } else if (selectedSalesChannels.length > 0) {
+          const channelIds = selectedSalesChannels
+            .filter((channelId) => channelId !== "none")
+            .map(Number);
 
-        for (const m of incomeMovements || []) {
-          const saleId = paymentToSale.get(m.related_id);
-          if (!saleId) continue;
-
-          if (
-            m.accreditation_status === "pending" &&
-            m.available_on &&
-            m.available_on > today
-          ) {
-            saleHasPendingMovements[saleId] = true;
+          if (channelIds.length > 0 && selectedSalesChannels.includes("none")) {
+            query = query.or(
+              `sales_channel_id.in.(${channelIds.join(",")}),sales_channel_id.is.null`,
+            );
+          } else if (channelIds.length > 0) {
+            query = query.in("sales_channel_id", channelIds);
           }
-
-          const amount = Number(m.amount || 0);
-          if (!amount) continue;
-
-          const saleRate = saleFxRateMap.get(saleId) || fxRate;
-
-          let amountUsd = null;
-          if (m.currency === "USD") {
-            amountUsd = amount;
-          } else if (m.currency === "USDT") {
-            if (usdtRate && saleRate)
-              amountUsd = (amount * usdtRate) / saleRate;
-            else amountUsd = amount;
-          } else if (m.currency === "ARS") {
-            if (saleRate) amountUsd = amount / saleRate;
-          }
-
-          if (amountUsd === null) continue;
-
-          saleAccreditedIncome[saleId] =
-            (saleAccreditedIncome[saleId] || 0) + amountUsd;
         }
+
+        return query
+          .order("sale_date", { ascending: true })
+          .order("id", { ascending: true })
+          .range(from, to);
+      });
+
+      const saleIds = salesData.map((sale) => sale.id);
+      const saleFxRateMap = new Map(
+        salesData.map((sale) => [sale.id, Number(sale.fx_rate_used || 0)]),
+      );
+      const saleAccreditedIncome = {};
+      const paymentsData = await fetchRowsForIds(saleIds, (batch, from, to) =>
+        supabase
+          .from("sale_payments")
+          .select("id, sale_id")
+          .in("sale_id", batch)
+          .order("id", { ascending: true })
+          .range(from, to),
+      );
+      const paymentToSale = new Map(
+        paymentsData.map((payment) => [payment.id, payment.sale_id]),
+      );
+      const paymentIds = paymentsData.map((payment) => payment.id);
+      const incomeMovements = await fetchRowsForIds(
+        paymentIds,
+        (batch, from, to) =>
+          supabase
+            .from("account_movements")
+            .select(
+              "amount, currency, related_id, accreditation_status, available_on",
+            )
+            .eq("type", "income")
+            .in("related_table", ["sale_payments", "sale_payment_history"])
+            .in("related_id", batch)
+            .order("id", { ascending: true })
+            .range(from, to),
+      );
+
+      for (const movement of incomeMovements) {
+        const saleId = paymentToSale.get(movement.related_id);
+        if (!saleId) continue;
+
+        const amount = Number(movement.amount || 0);
+        if (!amount) continue;
+
+        const saleRate = saleFxRateMap.get(saleId) || fxRate;
+        let amountUsd = null;
+        if (movement.currency === "USD") {
+          amountUsd = amount;
+        } else if (movement.currency === "USDT") {
+          amountUsd =
+            usdtRate && saleRate ? (amount * usdtRate) / saleRate : amount;
+        } else if (movement.currency === "ARS" && saleRate) {
+          amountUsd = amount / saleRate;
+        }
+
+        if (amountUsd === null) continue;
+        saleAccreditedIncome[saleId] =
+          (saleAccreditedIncome[saleId] || 0) + amountUsd;
       }
+
+      const uniqueLeadIds = salesData.map((sale) => sale.lead_id).filter(Boolean);
+      const leadsData = await fetchRowsForIds(uniqueLeadIds, (batch, from, to) =>
+        supabase
+          .from("leads")
+          .select("id, deposit_paid, deposit_amount, deposit_currency")
+          .in("id", batch)
+          .order("id", { ascending: true })
+          .range(from, to),
+      );
+      const leadDepositMap = new Map(leadsData.map((lead) => [lead.id, lead]));
+
+      const sellerIds = salesData.map((sale) => sale.seller_id).filter(Boolean);
+      const sellerUsers = await fetchRowsForIds(
+        sellerIds,
+        (batch, from, to) =>
+          supabase
+            .from("users")
+            .select("id_auth, role")
+            .in("id_auth", batch)
+            .order("id_auth", { ascending: true })
+            .range(from, to),
+      );
+      const sellerRoleMap = new Map(
+        sellerUsers.map((user) => [user.id_auth, user.role]),
+      );
+
+      const monthlyData = {};
+      salesData.forEach((sale) => {
+        const saleDateKey = String(sale.sale_date || "");
+        const monthKey = `${saleDateKey.slice(5, 7)}/${saleDateKey.slice(0, 4)}`;
+        if (monthKey.length !== 7) return;
+
+        if (!monthlyData[monthKey]) {
+          monthlyData[monthKey] = {
+            month: monthKey,
+            totalSales: 0,
+            totalCost: 0,
+            netIncome: 0,
+            salesCount: 0,
+          };
+        }
+
+        const tradeInUsd =
+          sale.sale_type === "canje" && sale.trade_in_data
+            ? getTotalReceivedUsd(sale.trade_in_data)
+            : 0;
+        const baseIncome =
+          saleAccreditedIncome[sale.id] != null
+            ? Number(saleAccreditedIncome[sale.id])
+            : Number(sale.total_usd || 0);
+        const lead = leadDepositMap.get(sale.lead_id);
+        const depositUsd = (() => {
+          if (!sale.lead_id || !lead?.deposit_paid) return 0;
+          const amount = Number(lead.deposit_amount || 0);
+          const currency = lead.deposit_currency || "ARS";
+          const saleRate = Number(sale.fx_rate_used || 0) || fxRate;
+          if (currency === "USD") return amount;
+          if (currency === "USDT")
+            return saleRate ? (amount * (usdtRate || 1)) / saleRate : amount;
+          if (currency === "ARS") return saleRate ? amount / saleRate : 0;
+          return 0;
+        })();
+        const income =
+          saleAccreditedIncome[sale.id] != null
+            ? baseIncome + tradeInUsd + depositUsd
+            : baseIncome + depositUsd;
+        const items = sale.sale_items || [];
+        const totalCost = items.reduce(
+          (sum, item) =>
+            sum +
+            Number(item.quantity || 0) * Number(item.cost_price_usd ?? 0),
+          0,
+        );
+        const commissionUsd =
+          sellerRoleMap.get(sale.seller_id) === "seller"
+            ? items.reduce((sum, item) => {
+                const quantity = Number(item.quantity || 0);
+                const price = Number(item.usd_price || 0);
+                if (item.commission_pct != null)
+                  return (
+                    sum +
+                    price * quantity * (Number(item.commission_pct) / 100)
+                  );
+                if (item.commission_fixed != null)
+                  return sum + Number(item.commission_fixed) * quantity;
+                return sum;
+              }, 0)
+            : 0;
+        const commission = roundCurrency(commissionUsd);
+
+        monthlyData[monthKey].totalSales += income;
+        monthlyData[monthKey].totalCost += totalCost;
+        monthlyData[monthKey].netIncome += roundCurrency(
+          income - totalCost - commission,
+        );
+        monthlyData[monthKey].salesCount += 1;
+      });
+
+      const sortedData = Object.values(monthlyData).sort((a, b) => {
+        const [monthA, yearA] = a.month.split("/").map(Number);
+        const [monthB, yearB] = b.month.split("/").map(Number);
+        return yearB - yearA || monthB - monthA;
+      });
+      setMonthlyNetIncome(sortedData);
+    } catch (error) {
+      console.error("Error loading net income:", error);
+      toast.error("No se pudieron cargar los ingresos netos", {
+        description: error.message,
+      });
+    } finally {
+      setMonthlyNetIncomeLoading(false);
     }
-
-    // Obtener datos de depósito (señas) de los leads asociados a las ventas
-    const uniqueLeadIds = [
-      ...new Set((salesData || []).map((s) => s.lead_id).filter(Boolean)),
-    ];
-    const leadDepositMap = {};
-    if (uniqueLeadIds.length > 0) {
-      const { data: leadsData } = await supabase
-        .from("leads")
-        .select("id, deposit_paid, deposit_amount, deposit_currency")
-        .in("id", uniqueLeadIds);
-      (leadsData || []).forEach((l) => {
-        leadDepositMap[l.id] = l;
-      });
-    }
-
-    // Calcular ingresos netos por mes usando el ingreso real acreditado
-    const monthlyData = {};
-
-    (salesData || []).forEach((sale) => {
-      const saleDate = new Date(sale.sale_date);
-      const monthKey = saleDate.toLocaleString("es-AR", {
-        year: "numeric",
-        month: "2-digit",
-      });
-
-      if (!monthlyData[monthKey]) {
-        monthlyData[monthKey] = {
-          month: monthKey,
-          totalSales: 0,
-          totalCost: 0,
-          netIncome: 0,
-          salesCount: 0,
-        };
-      }
-
-      const tradeInUsd =
-        sale.sale_type === "canje" && sale.trade_in_data
-          ? getTotalReceivedUsd(sale.trade_in_data)
-          : 0;
-      const baseIncome =
-        saleAccreditedIncome[sale.id] != null
-          ? Number(saleAccreditedIncome[sale.id])
-          : Number(sale.total_usd || 0);
-      const depositUsd = (() => {
-        if (!sale.lead_id) return 0;
-        const lead = leadDepositMap[sale.lead_id];
-        if (!lead?.deposit_paid) return 0;
-        const amount = Number(lead.deposit_amount || 0);
-        const currency = lead.deposit_currency || "ARS";
-        const saleRate = Number(sale.fx_rate_used || 0) || fxRate;
-        if (currency === "USD") return amount;
-        if (currency === "USDT")
-          return saleRate ? (amount * (usdtRate || 1)) / saleRate : amount;
-        if (currency === "ARS") return saleRate ? amount / saleRate : 0;
-        return 0;
-      })();
-      const income =
-        saleAccreditedIncome[sale.id] != null
-          ? baseIncome + tradeInUsd + depositUsd
-          : baseIncome + depositUsd;
-      monthlyData[monthKey].totalSales += income;
-
-      sale.sale_items?.forEach((item) => {
-        const quantity = Number(item.quantity || 0);
-        const costPrice = Number(item.cost_price_usd ?? 0);
-        monthlyData[monthKey].totalCost += quantity * costPrice;
-      });
-
-      monthlyData[monthKey].salesCount += 1;
-    });
-
-    Object.keys(monthlyData).forEach((key) => {
-      monthlyData[key].netIncome =
-        monthlyData[key].totalSales - monthlyData[key].totalCost;
-    });
-
-    const sortedData = Object.values(monthlyData).sort((a, b) => {
-      return b.month.localeCompare(a.month);
-    });
-
-    setMonthlyNetIncome(sortedData);
-    setMonthlyNetIncomeLoading(false);
   }, [selectedSalesChannels, selectedYear, fxRate, usdtRate]);
 
   const loadMonthDetail = useCallback(
@@ -992,9 +1048,9 @@ export default function FinancePage() {
         );
         const commission =
           sale.commission_usd != null
-            ? Number(sale.commission_usd.toFixed(2))
+            ? roundCurrency(sale.commission_usd)
             : 0;
-        const net = totalSale - totalCost - commission;
+        const net = roundCurrency(totalSale - totalCost - commission);
 
         return {
           Fecha: new Date(sale.sale_date).toLocaleDateString("es-AR"),
@@ -1003,8 +1059,8 @@ export default function FinancePage() {
           Canal: sale.sales_channels?.name || "-",
           Cantidad: totalQty,
           Cotización: Number(sale.fx_rate_used ?? 0),
-          "Total Vta (USD)": totalSale,
-          "Costo Total (USD)": totalCost,
+          "Total Vta (USD)": roundCurrency(totalSale),
+          "Costo Total (USD)": roundCurrency(totalCost),
           "Comisión (USD)":
             sale.commission_usd != null ? commission : "No aplica",
           "Ganancia Neta (USD)": net,
@@ -1065,9 +1121,9 @@ export default function FinancePage() {
           );
           const commission =
             sale.commission_usd != null
-              ? Number(sale.commission_usd.toFixed(2))
+              ? roundCurrency(sale.commission_usd)
               : 0;
-          const net = totalSale - totalCost - commission;
+          const net = roundCurrency(totalSale - totalCost - commission);
 
           return [
             new Date(sale.sale_date).toLocaleDateString("es-AR"),
@@ -1448,7 +1504,7 @@ export default function FinancePage() {
           <div className="flex flex-col gap-2">
             <CardTitle>Ingresos netos por mes - Ventas concretadas</CardTitle>
             <p className="text-sm text-muted-foreground">
-              Ingresos por venta menos costo del producto
+              Ingresos por venta menos costo del producto y comisiones
             </p>
           </div>
           <div className="flex flex-col gap-4 md:flex-row md:items-end md:gap-3">
@@ -1904,9 +1960,9 @@ export default function FinancePage() {
                     );
                     const commission =
                       sale.commission_usd != null
-                        ? Number(sale.commission_usd.toFixed(2))
+                        ? roundCurrency(sale.commission_usd)
                         : 0;
-                    const net = totalSale - totalCost - commission;
+                    const net = roundCurrency(totalSale - totalCost - commission);
 
                     return (
                       <TableRow key={sale.id}>
