@@ -926,26 +926,11 @@ export function SalesList() {
 
       // Eliminar unidad recibida por canje si se eligió
       if (deleteCanjeUnit && canjeReceivedUnits.length > 0) {
-        for (const canjeUnit of canjeReceivedUnits) {
-          // Decrementar stock de la variante recibida antes de eliminar
-          if (canjeUnit.variant_id) {
-            const { data: rv, error: rvErr } = await supabase
-              .from("product_variants")
-              .select("stock")
-              .eq("id", canjeUnit.variant_id)
-              .single();
-            if (!rvErr && rv) {
-              await supabase
-                .from("product_variants")
-                .update({ stock: Math.max(0, (rv.stock || 0) - 1) })
-                .eq("id", canjeUnit.variant_id);
-            }
-          }
-          await supabase
-            .from("inventory_units")
-            .delete()
-            .eq("id", canjeUnit.id);
-        }
+        const { error: canjeErr } = await supabase.rpc(
+          "remove_canje_received_units",
+          { p_sale_id: confirmCancelSale.sale_id },
+        );
+        if (canjeErr) throw canjeErr;
       }
 
       // Update sale status
