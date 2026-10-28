@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { fetchAllSupabaseRows } from "@/utils/fetchAllSupabaseRows";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
@@ -106,7 +107,7 @@ export default function FinanceReport() {
       const [
         { data: salesData },
         { data: expensesData },
-        { data: movementsData },
+        movementsData,
         { data: topCustomersData },
       ] = await Promise.all([
         supabase
@@ -122,11 +123,15 @@ export default function FinanceReport() {
           .gte("expense_date", yearStart)
           .lte("expense_date", yearEnd)
           .eq("is_active", true),
-        supabase
-          .from("account_movements")
-          .select("id, type, amount, currency, movement_date")
-          .gte("movement_date", yearStart)
-          .lte("movement_date", yearEnd),
+        fetchAllSupabaseRows((from, to) =>
+          supabase
+            .from("account_movements")
+            .select("id, type, amount, currency, movement_date")
+            .gte("movement_date", yearStart)
+            .lte("movement_date", yearEnd)
+            .order("id", { ascending: true })
+            .range(from, to),
+        ),
         supabase
           .from("sales")
           .select(`

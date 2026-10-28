@@ -320,6 +320,7 @@ export default function CashRegisterPage() {
       await checkOpenRegister();
       await loadEfectivoAccounts();
       await loadVirtualAccounts();
+      await loadAllAccounts();
     } catch (error) {
       toast.error("No se pudo anular la venta", { description: error.message });
     } finally {
@@ -820,6 +821,7 @@ export default function CashRegisterPage() {
         onReload={async () => {
           await loadEfectivoAccounts();
           await loadVirtualAccounts();
+          await loadAllAccounts();
         }}
       />
 

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { fetchAllSupabaseRows } from "@/utils/fetchAllSupabaseRows";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -100,32 +101,28 @@ export default function AccountsConfig() {
   });
 
   const loadAllMovements = async () => {
-    let all = [];
-    let from = 0;
-    const pageSize = 1000;
-    while (true) {
-      const { data, error } = await supabase
+    return fetchAllSupabaseRows((from, to) =>
+      supabase
         .from("account_movements")
         .select("id, account_id, type, amount, accreditation_status, available_on")
-        .range(from, from + pageSize - 1);
-      if (error) throw error;
-      if (!data?.length) break;
-      all = [...all, ...data];
-      from += pageSize;
-      if (data.length < pageSize) break;
-    }
-    return all;
+        .order("id", { ascending: true })
+        .range(from, to),
+    );
   };
 
   const loadAccounts = async () => {
     const [{ data, error }, { data: rate }, { data: usdt }] = await Promise.all([
-      supabase
-        .from("accounts")
-        .select(
-          "id, name, currency, initial_balance, notes, include_in_balance, is_reference_capital, is_caja_virtual, is_efectivo"
-        )
-        .eq("active", true)
-        .order("name", { ascending: true }),
+      fetchAllSupabaseRows((from, to) =>
+        supabase
+          .from("accounts")
+          .select(
+            "id, name, currency, initial_balance, notes, include_in_balance, is_reference_capital, is_caja_virtual, is_efectivo"
+          )
+          .eq("active", true)
+          .order("name", { ascending: true })
+          .order("id", { ascending: true })
+          .range(from, to),
+      ).then((rows) => ({ data: rows, error: null })).catch((loadError) => ({ data: null, error: loadError })),
       supabase
         .from("fx_rates")
         .select("rate")

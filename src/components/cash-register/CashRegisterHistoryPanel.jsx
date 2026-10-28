@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { fetchAllSupabaseRows } from "@/utils/fetchAllSupabaseRows";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -120,21 +121,29 @@ export default function CashRegisterHistoryPanel() {
       usdtRateResponse,
       cashAccountsResponse,
     ] = await Promise.all([
-      supabase
-        .from("cash_register_movements")
-        .select(
-          "*, accounts!cash_register_movements_account_id_fkey(name, currency, is_efectivo, is_caja_virtual)",
-        )
-        .eq("cash_register_id", register.id)
-        .order("created_at", { ascending: true }),
-      supabase
-        .from("account_movements")
-        .select("*, accounts(name, currency)")
-        .in("related_table", [
-          "cash_register",
-          "cash_register_opening_adjustment",
-        ])
-        .eq("related_id", register.id),
+      fetchAllSupabaseRows((from, to) =>
+        supabase
+          .from("cash_register_movements")
+          .select(
+            "*, accounts!cash_register_movements_account_id_fkey(name, currency, is_efectivo, is_caja_virtual)",
+          )
+          .eq("cash_register_id", register.id)
+          .order("created_at", { ascending: true })
+          .order("id", { ascending: true })
+          .range(from, to),
+      ).then((data) => ({ data, error: null })).catch((error) => ({ data: null, error })),
+      fetchAllSupabaseRows((from, to) =>
+        supabase
+          .from("account_movements")
+          .select("*, accounts(name, currency)")
+          .in("related_table", [
+            "cash_register",
+            "cash_register_opening_adjustment",
+          ])
+          .eq("related_id", register.id)
+          .order("id", { ascending: true })
+          .range(from, to),
+      ).then((data) => ({ data, error: null })).catch((error) => ({ data: null, error })),
       supabase
         .from("fx_rates")
         .select("rate")

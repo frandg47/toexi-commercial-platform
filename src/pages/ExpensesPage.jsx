@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { supabase } from "@/lib/supabaseClient";
+import { fetchAllSupabaseRows } from "@/utils/fetchAllSupabaseRows";
+import { calculateAccountBalances } from "@/utils/cashAccountBalances";
 import { useAuth } from "@/context/AuthContextProvider";
 import { FEATURES } from "@/config/features";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -348,18 +350,20 @@ export default function ExpensesPage() {
   }, []);
 
   const reloadBalanceMovements = useCallback(async () => {
-    const movementsRes = await supabase
-      .from("account_movements")
-      .select("account_id, type, amount");
-
-    if (movementsRes?.error) {
+    try {
+      const movements = await fetchAllSupabaseRows((from, to) =>
+        supabase
+          .from("account_movements")
+          .select("account_id, type, amount, accreditation_status, available_on")
+          .order("id", { ascending: true })
+          .range(from, to),
+      );
+      setBalanceMovements(movements);
+    } catch (error) {
       toast.error("No se pudieron cargar los movimientos", {
-        description: movementsRes.error.message,
+        description: error.message,
       });
-      return;
     }
-
-    setBalanceMovements(movementsRes?.data || []);
   }, []);
 
   useEffect(() => {
@@ -384,18 +388,28 @@ export default function ExpensesPage() {
           .eq("is_active", true)
           .eq("source", "USDT")
           .maybeSingle(),
-        supabase
-          .from("accounts")
-          .select(
-            "id, name, currency, initial_balance, notes, include_in_balance, is_reference_capital, is_efectivo, is_caja_virtual",
-          )
-          .eq("is_reference_capital", false)
-          .order("name", { ascending: true }),
+        fetchAllSupabaseRows((from, to) =>
+          supabase
+            .from("accounts")
+            .select(
+              "id, name, currency, initial_balance, notes, include_in_balance, is_reference_capital, is_efectivo, is_caja_virtual",
+            )
+            .eq("is_reference_capital", false)
+            .order("name", { ascending: true })
+            .order("id", { ascending: true })
+            .range(from, to),
+        ).then((rows) => ({ data: rows, error: null })).catch((error) => ({ data: null, error })),
         supabase
           .from("finance_categories")
           .select("id, name, type, is_active, created_at")
           .order("name", { ascending: true }),
-        supabase.from("account_movements").select("account_id, type, amount"),
+        fetchAllSupabaseRows((from, to) =>
+          supabase
+            .from("account_movements")
+            .select("account_id, type, amount, accreditation_status, available_on")
+            .order("id", { ascending: true })
+            .range(from, to),
+        ).then((data) => ({ data, error: null })).catch((error) => ({ data: null, error })),
       ]);
 
       setFxRate(rate?.rate ? Number(rate.rate) : null);
@@ -443,34 +457,7 @@ export default function ExpensesPage() {
     [displayAccounts, incomeForm.account_id],
   );
   const accountBalances = useMemo(() => {
-    const totals = new Map();
-    balanceMovements.forEach((movement) => {
-      const entry = totals.get(movement.account_id) || {
-        income: 0,
-        expense: 0,
-      };
-      if (movement.type === "income") {
-        entry.income += Number(movement.amount || 0);
-      } else if (movement.type === "expense") {
-        entry.expense += Number(movement.amount || 0);
-      }
-      totals.set(movement.account_id, entry);
-    });
-
-    return displayAccounts.map((acc) => {
-      const totalsForAccount = totals.get(acc.id) || {
-        income: 0,
-        expense: 0,
-      };
-      const current =
-        Number(acc.initial_balance || 0) +
-        totalsForAccount.income -
-        totalsForAccount.expense;
-      return {
-        ...acc,
-        current_balance: current,
-      };
-    });
+    return calculateAccountBalances(displayAccounts, balanceMovements);
   }, [displayAccounts, balanceMovements]);
 
   const balanceByAccountId = useMemo(() => {

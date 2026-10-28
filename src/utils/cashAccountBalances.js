@@ -8,7 +8,8 @@ export const todayDateKey = () =>
 
 export const isMovementAvailable = (movement) => {
   if (movement?.accreditation_status !== "pending") return true;
-  return Boolean(movement.available_on && movement.available_on <= todayDateKey());
+  if (!movement.available_on) return true;
+  return movement.available_on <= todayDateKey();
 };
 
 export const calculateAccountBalances = (accounts, movements) => {

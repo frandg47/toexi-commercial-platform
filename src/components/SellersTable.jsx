@@ -3,6 +3,8 @@ import { toast } from "sonner";
 
 import { supabase } from "../lib/supabaseClient";
 import { formatPersonName } from "@/utils/formatName";
+import { fetchAllSupabaseRows } from "@/utils/fetchAllSupabaseRows";
+import { calculateAccountBalances } from "@/utils/cashAccountBalances";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -471,13 +473,21 @@ const SellersTable = ({ refreshToken = 0 }) => {
     useEffect(() => {
         const loadAccounts = async () => {
             const [{ data, error }, movementsRes] = await Promise.all([
-                supabase
-                    .from("accounts")
-                    .select("id, name, currency, initial_balance, is_efectivo, is_caja_virtual")
-                    .order("name", { ascending: true }),
-                supabase
-                    .from("account_movements")
-                    .select("account_id, type, amount"),
+                fetchAllSupabaseRows((from, to) =>
+                    supabase
+                        .from("accounts")
+                        .select("id, name, currency, initial_balance, is_efectivo, is_caja_virtual")
+                        .order("name", { ascending: true })
+                        .order("id", { ascending: true })
+                        .range(from, to),
+                ).then((rows) => ({ data: rows, error: null })).catch((accountError) => ({ data: null, error: accountError })),
+                fetchAllSupabaseRows((from, to) =>
+                    supabase
+                        .from("account_movements")
+                        .select("account_id, type, amount, accreditation_status, available_on")
+                        .order("id", { ascending: true })
+                        .range(from, to),
+                ).then((rows) => ({ data: rows, error: null })).catch((movementError) => ({ data: null, error: movementError })),
             ]);
             if (error) {
                 console.error(error);
@@ -513,34 +523,7 @@ const SellersTable = ({ refreshToken = 0 }) => {
     }, [accounts, isRegisterOpen]);
 
     const accountBalances = useMemo(() => {
-        const totals = new Map();
-        balanceMovements.forEach((movement) => {
-            const entry = totals.get(movement.account_id) || {
-                income: 0,
-                expense: 0,
-            };
-            if (movement.type === "income") {
-                entry.income += Number(movement.amount || 0);
-            } else if (movement.type === "expense") {
-                entry.expense += Number(movement.amount || 0);
-            }
-            totals.set(movement.account_id, entry);
-        });
-
-        return displayAccounts.map((acc) => {
-            const totalsForAccount = totals.get(acc.id) || {
-                income: 0,
-                expense: 0,
-            };
-            const current =
-                Number(acc.initial_balance || 0) +
-                totalsForAccount.income -
-                totalsForAccount.expense;
-            return {
-                ...acc,
-                current_balance: current,
-            };
-        });
+        return calculateAccountBalances(displayAccounts, balanceMovements);
     }, [displayAccounts, balanceMovements]);
 
     const selectedPaymentAccount = useMemo(() => {

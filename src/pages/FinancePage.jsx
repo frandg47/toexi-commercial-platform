@@ -3,6 +3,7 @@ import { Navigate } from "react-router-dom";
 import { supabase } from "@/lib/supabaseClient";
 import { useAuth } from "@/context/AuthContextProvider";
 import { getTotalReceivedUsd } from "@/utils/tradeInHelpers";
+import { fetchAllSupabaseRows } from "@/utils/fetchAllSupabaseRows";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -106,29 +107,11 @@ const chunkArray = (items, size = 100) => {
   return chunks;
 };
 
-const fetchAllPages = async (createQuery) => {
-  const pageSize = 1000;
-  const allRows = [];
-  let from = 0;
-
-  while (true) {
-    const { data, error } = await createQuery(from, from + pageSize - 1);
-    if (error) throw error;
-    if (!data?.length) break;
-
-    allRows.push(...data);
-    if (data.length < pageSize) break;
-    from += pageSize;
-  }
-
-  return allRows;
-};
-
 const fetchRowsForIds = async (ids, createQuery) => {
   const batches = chunkArray([...new Set(ids.filter(Boolean))]);
   const results = await Promise.all(
     batches.map((batch) =>
-      fetchAllPages((from, to) => createQuery(batch, from, to)),
+      fetchAllSupabaseRows((from, to) => createQuery(batch, from, to)),
     ),
   );
   return results.flat();
@@ -172,23 +155,15 @@ export default function FinancePage() {
     setLoading(true);
 
     const loadAllMovements = async () => {
-      let all = [];
-      let from = 0;
-      const pageSize = 1000;
-      while (true) {
-        const { data, error } = await supabase
+      return fetchAllSupabaseRows((from, to) =>
+        supabase
           .from("account_movements")
           .select(
             "account_id, type, amount, currency, accreditation_status, available_on, related_table, related_id",
           )
-          .range(from, from + pageSize - 1);
-        if (error) throw error;
-        if (!data?.length) break;
-        all = [...all, ...data];
-        from += pageSize;
-        if (data.length < pageSize) break;
-      }
-      return all;
+          .order("id", { ascending: true })
+          .range(from, to),
+      );
     };
 
     const [
@@ -200,13 +175,17 @@ export default function FinancePage() {
       { data: salesChannelsData, error: salesChannelsError },
       { data: salesYearsData, error: salesYearsError },
     ] = await Promise.all([
-      supabase
-        .from("accounts")
-        .select(
-          "id, name, currency, initial_balance, active, include_in_balance, is_reference_capital, is_efectivo, is_caja_virtual",
-        )
-        .eq("active", true)
-        .order("name", { ascending: true }),
+      fetchAllSupabaseRows((from, to) =>
+        supabase
+          .from("accounts")
+          .select(
+            "id, name, currency, initial_balance, active, include_in_balance, is_reference_capital, is_efectivo, is_caja_virtual",
+          )
+          .eq("active", true)
+          .order("name", { ascending: true })
+          .order("id", { ascending: true })
+          .range(from, to),
+      ).then((data) => ({ data, error: null })).catch((error) => ({ data: null, error })),
       supabase
         .from("fx_rates")
         .select("rate")
@@ -390,7 +369,7 @@ export default function FinancePage() {
       const yearStart = `${selectedYear}-01-01`;
       const nextYearStart = `${selectedYear + 1}-01-01`;
 
-      const salesData = await fetchAllPages((from, to) => {
+      const salesData = await fetchAllSupabaseRows((from, to) => {
         let query = supabase
           .from("sales")
           .select(
@@ -701,21 +680,27 @@ export default function FinancePage() {
         const paymentIds = (paymentsData || []).map((p) => p.id);
 
         if (paymentIds.length > 0) {
-          const { data: incomeMovements } = await supabase
-            .from("account_movements")
-            .select(
-              "amount, currency, related_id, accreditation_status, available_on",
-            )
-            .eq("type", "income")
-            .in("related_table", ["sale_payments", "sale_payment_history"])
-            .in("related_id", paymentIds);
+          const incomeMovements = await fetchRowsForIds(
+            paymentIds,
+            (batch, from, to) =>
+              supabase
+                .from("account_movements")
+                .select(
+                  "amount, currency, related_id, accreditation_status, available_on",
+                )
+                .eq("type", "income")
+                .in("related_table", ["sale_payments", "sale_payment_history"])
+                .in("related_id", batch)
+                .order("id", { ascending: true })
+                .range(from, to),
+          );
 
           const paymentToSale = new Map(
             (paymentsData || []).map((p) => [p.id, p.sale_id]),
           );
           const today = todayDateKey();
 
-          for (const m of incomeMovements || []) {
+          for (const m of incomeMovements) {
             const saleId = paymentToSale.get(m.related_id);
             if (!saleId) continue;
 
@@ -913,21 +898,27 @@ export default function FinancePage() {
         const paymentIds = (paymentsData || []).map((p) => p.id);
 
         if (paymentIds.length > 0) {
-          const { data: incomeMovements } = await supabase
-            .from("account_movements")
-            .select(
-              "amount, currency, related_id, accreditation_status, available_on",
-            )
-            .eq("type", "income")
-            .in("related_table", ["sale_payments", "sale_payment_history"])
-            .in("related_id", paymentIds);
+          const incomeMovements = await fetchRowsForIds(
+            paymentIds,
+            (batch, from, to) =>
+              supabase
+                .from("account_movements")
+                .select(
+                  "amount, currency, related_id, accreditation_status, available_on",
+                )
+                .eq("type", "income")
+                .in("related_table", ["sale_payments", "sale_payment_history"])
+                .in("related_id", batch)
+                .order("id", { ascending: true })
+                .range(from, to),
+          );
 
           const paymentToSale = new Map(
             (paymentsData || []).map((p) => [p.id, p.sale_id]),
           );
           const today = todayDateKey();
 
-          for (const m of incomeMovements || []) {
+          for (const m of incomeMovements) {
             const saleId = paymentToSale.get(m.related_id);
             if (!saleId) continue;
 
@@ -1204,41 +1195,42 @@ export default function FinancePage() {
   }, [selectedSalesChannels, salesChannels]);
 
   const loadFilteredBalances = useCallback(async () => {
-    let query = supabase
-      .from("account_movements")
-      .select(
-        "account_id, type, amount, currency, accreditation_status, available_on",
-      );
+    try {
+      const data = await fetchAllSupabaseRows((from, to) => {
+        let query = supabase
+          .from("account_movements")
+          .select(
+            "account_id, type, amount, currency, accreditation_status, available_on",
+          );
 
-    if (filters.accountId !== "all") {
-      query = query.eq("account_id", filters.accountId);
-    }
-    if (filters.type !== "all") {
-      query = query.eq("type", filters.type);
-    }
-    if (dateRange?.from) {
-      query = query.gte(
-        "movement_date",
-        dateRange.from.toISOString().slice(0, 10),
-      );
-    }
-    if (dateRange?.to) {
-      query = query.lte(
-        "movement_date",
-        dateRange.to.toISOString().slice(0, 10),
-      );
-    }
+        if (filters.accountId !== "all") {
+          query = query.eq("account_id", filters.accountId);
+        }
+        if (filters.type !== "all") {
+          query = query.eq("type", filters.type);
+        }
+        if (dateRange?.from) {
+          query = query.gte(
+            "movement_date",
+            dateRange.from.toISOString().slice(0, 10),
+          );
+        }
+        if (dateRange?.to) {
+          query = query.lte(
+            "movement_date",
+            dateRange.to.toISOString().slice(0, 10),
+          );
+        }
 
-    const { data, error } = await query;
+        return query.order("id", { ascending: true }).range(from, to);
+      });
 
-    if (error) {
+      setBalanceMovementsFiltered(data);
+    } catch (error) {
       toast.error("No se pudo cargar el balance filtrado", {
         description: error.message,
       });
-      return;
     }
-
-    setBalanceMovementsFiltered(data || []);
   }, [filters, dateRange]);
 
   useEffect(() => {

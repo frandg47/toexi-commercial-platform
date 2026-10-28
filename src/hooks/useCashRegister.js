@@ -1,9 +1,11 @@
 import { useState, useCallback, useEffect } from "react";
+import { toast } from "sonner";
 import { supabase } from "@/lib/supabaseClient";
 import {
   calculateAccountBalances,
   isMovementAvailable,
 } from "@/utils/cashAccountBalances";
+import { fetchAllSupabaseRows } from "@/utils/fetchAllSupabaseRows";
 
 function addBusinessDays(startDate, days) {
   const result = new Date(startDate);
@@ -50,17 +52,22 @@ export function useCashRegister(userId) {
   const loadMovements = useCallback(async (registerId) => {
     if (!registerId) return;
     try {
-      const { data, error } = await supabase
-        .from("cash_register_movements")
-        .select("*, accounts!cash_register_movements_account_id_fkey(name, currency, is_efectivo, is_caja_virtual)")
-        .eq("cash_register_id", registerId)
-        .order("created_at", { ascending: true });
-
-      if (error) throw error;
-      setMovements(data || []);
-      setCajaBalances(computeCajaBalances(data || []));
+      const data = await fetchAllSupabaseRows((from, to) =>
+        supabase
+          .from("cash_register_movements")
+          .select("*, accounts!cash_register_movements_account_id_fkey(name, currency, is_efectivo, is_caja_virtual)")
+          .eq("cash_register_id", registerId)
+          .order("created_at", { ascending: true })
+          .order("id", { ascending: true })
+          .range(from, to),
+      );
+      setMovements(data);
+      setCajaBalances(computeCajaBalances(data));
     } catch (err) {
       console.error("Error loading movements:", err);
+      toast.error("No se pudieron actualizar los movimientos de caja", {
+        description: err.message,
+      });
     }
   }, [computeCajaBalances]);
 
@@ -100,63 +107,92 @@ export function useCashRegister(userId) {
 
   const loadVirtualAccounts = useCallback(async () => {
     try {
-      const { data: accounts } = await supabase
-        .from("accounts")
-        .select("id, name, currency, initial_balance, is_caja_virtual")
-        .eq("is_caja_virtual", true)
-        .order("name");
+      const accounts = await fetchAllSupabaseRows((from, to) =>
+        supabase
+          .from("accounts")
+          .select("id, name, currency, initial_balance, is_caja_virtual")
+          .eq("is_caja_virtual", true)
+          .order("name")
+          .order("id", { ascending: true })
+          .range(from, to),
+      );
 
       if (!accounts?.length) {
         setVirtualAccounts([]);
         return;
       }
 
-      const { data: movements } = await supabase
-        .from("account_movements")
-        .select("account_id, type, amount, accreditation_status, available_on")
-        .in("account_id", accounts.map((a) => a.id));
+      const movements = await fetchAllSupabaseRows((from, to) =>
+        supabase
+          .from("account_movements")
+          .select("account_id, type, amount, accreditation_status, available_on")
+          .in("account_id", accounts.map((a) => a.id))
+          .order("id", { ascending: true })
+          .range(from, to),
+      );
 
       setVirtualAccounts(calculateAccountBalances(accounts, movements));
     } catch (err) {
       console.error("Error loading virtual accounts:", err);
+      toast.error("No se pudieron actualizar las cuentas virtuales", {
+        description: err.message,
+      });
     }
   }, []);
 
   const loadAccountMovements = useCallback(async (registerId) => {
     if (!registerId) return;
     try {
-      const { data } = await supabase
-        .from("account_movements")
-        .select("*, accounts!inner(name, currency)")
-        .eq("related_table", "cash_register")
-        .eq("related_id", registerId);
-      setAccountMovements(data || []);
+      const data = await fetchAllSupabaseRows((from, to) =>
+        supabase
+          .from("account_movements")
+          .select("*, accounts!inner(name, currency)")
+          .eq("related_table", "cash_register")
+          .eq("related_id", registerId)
+          .order("id", { ascending: true })
+          .range(from, to),
+      );
+      setAccountMovements(data);
     } catch (err) {
       console.error("Error loading account movements:", err);
+      toast.error("No se pudieron cargar los movimientos asociados a la caja", {
+        description: err.message,
+      });
     }
   }, []);
 
   const loadEfectivoAccounts = useCallback(async () => {
     try {
-      const { data: accounts } = await supabase
-        .from("accounts")
-        .select("id, name, currency, initial_balance, is_efectivo")
-        .eq("is_efectivo", true)
-        .order("name");
+      const accounts = await fetchAllSupabaseRows((from, to) =>
+        supabase
+          .from("accounts")
+          .select("id, name, currency, initial_balance, is_efectivo")
+          .eq("is_efectivo", true)
+          .order("name")
+          .order("id", { ascending: true })
+          .range(from, to),
+      );
 
       if (!accounts?.length) {
         setEfectivoAccounts([]);
         return;
       }
 
-      const { data: movements } = await supabase
-        .from("account_movements")
-        .select("account_id, type, amount, accreditation_status, available_on")
-        .in("account_id", accounts.map((a) => a.id));
+      const movements = await fetchAllSupabaseRows((from, to) =>
+        supabase
+          .from("account_movements")
+          .select("account_id, type, amount, accreditation_status, available_on")
+          .in("account_id", accounts.map((a) => a.id))
+          .order("id", { ascending: true })
+          .range(from, to),
+      );
 
       setEfectivoAccounts(calculateAccountBalances(accounts, movements));
     } catch (err) {
       console.error("Error loading efectivo accounts:", err);
+      toast.error("No se pudieron actualizar las cuentas de efectivo", {
+        description: err.message,
+      });
     }
   }, []);
 
@@ -192,25 +228,36 @@ export function useCashRegister(userId) {
 
   const loadAllAccounts = useCallback(async () => {
     try {
-      const { data: accounts } = await supabase
-        .from("accounts")
-        .select("id, name, currency, initial_balance, is_reference_capital, is_caja_virtual, is_efectivo")
-        .eq("is_reference_capital", false)
-        .order("name");
+      const accounts = await fetchAllSupabaseRows((from, to) =>
+        supabase
+          .from("accounts")
+          .select("id, name, currency, initial_balance, is_reference_capital, is_caja_virtual, is_efectivo")
+          .eq("is_reference_capital", false)
+          .order("name")
+          .order("id", { ascending: true })
+          .range(from, to),
+      );
 
       if (!accounts?.length) {
         setAllAccounts([]);
         return;
       }
 
-      const { data: movements } = await supabase
-        .from("account_movements")
-        .select("account_id, type, amount, accreditation_status, available_on")
-        .in("account_id", accounts.map((a) => a.id));
+      const movements = await fetchAllSupabaseRows((from, to) =>
+        supabase
+          .from("account_movements")
+          .select("account_id, type, amount, accreditation_status, available_on")
+          .in("account_id", accounts.map((a) => a.id))
+          .order("id", { ascending: true })
+          .range(from, to),
+      );
 
       setAllAccounts(calculateAccountBalances(accounts, movements));
     } catch (err) {
       console.error("Error loading all accounts:", err);
+      toast.error("No se pudieron actualizar los saldos de las cuentas", {
+        description: err.message,
+      });
     }
   }, []);
 

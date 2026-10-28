@@ -190,7 +190,7 @@ export default function DialogRegisterMovement({
       );
       if (result?.ok) {
         const today = new Date().toISOString().slice(0, 10);
-        await supabase.from("account_movements").insert({
+        const { error } = await supabase.from("account_movements").insert({
           movement_date: today,
           account_id: Number(accountId),
           type: type === "withdrawal" ? "expense" : "income",
@@ -201,7 +201,14 @@ export default function DialogRegisterMovement({
            operation_id: operationId,
            notes: notes || (type === "withdrawal" ? "Retiro desde caja" : "Ingreso a caja"),
         });
-        onReload?.();
+        await onReload?.();
+        if (error) {
+          toast.error("Movimiento registrado en caja, pero no en el saldo de la cuenta", {
+            description: error.message,
+          });
+          onOpenChange(false);
+          return;
+        }
         toast.success(type === "withdrawal" ? "Retiro registrado" : "Ingreso registrado");
         onOpenChange(false);
       } else {
@@ -261,12 +268,12 @@ export default function DialogRegisterMovement({
         },
       ]);
 
+      await onReload?.();
       if (error) {
         toast.error("Depósito registrado en caja, pero falló el registro en la cuenta", {
           description: error.message,
         });
       } else {
-        onReload?.();
         toast.success("Depósito registrado");
       }
       onOpenChange(false);
@@ -293,7 +300,7 @@ export default function DialogRegisterMovement({
        const r2 = await onConfirm("transfer_in", parsed, selectedAccount.currency, noteText, destinationAccountId, operationId);
       if (r2?.ok) {
         const today = new Date().toISOString().slice(0, 10);
-        await supabase.from("account_movements").insert([
+        const { error } = await supabase.from("account_movements").insert([
           {
             movement_date: today,
             account_id: Number(accountId),
@@ -317,7 +324,14 @@ export default function DialogRegisterMovement({
            notes: noteText,
           },
         ]);
-        onReload?.();
+        await onReload?.();
+        if (error) {
+          toast.error("Transferencia registrada parcialmente", {
+            description: `La caja cambió, pero no se actualizó el saldo de las cuentas: ${error.message}`,
+          });
+          onOpenChange(false);
+          return;
+        }
         toast.success("Transferencia registrada");
         onOpenChange(false);
       } else {
@@ -350,7 +364,7 @@ export default function DialogRegisterMovement({
        const r2 = await onConfirm("transfer_in", convertedAmount, selectedDestination.currency, noteText, destinationAccountId, operationId);
       if (r2?.ok) {
         const today = new Date().toISOString().slice(0, 10);
-        await supabase.from("account_movements").insert([
+        const { error } = await supabase.from("account_movements").insert([
           {
             movement_date: today,
             account_id: Number(accountId),
@@ -374,7 +388,14 @@ export default function DialogRegisterMovement({
            notes: noteText,
           },
         ]);
-        onReload?.();
+        await onReload?.();
+        if (error) {
+          toast.error("Cambio registrado parcialmente", {
+            description: `La caja cambió, pero no se actualizó el saldo de las cuentas: ${error.message}`,
+          });
+          onOpenChange(false);
+          return;
+        }
         toast.success("Cambio registrado");
         onOpenChange(false);
       } else {

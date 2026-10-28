@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { supabase } from "@/lib/supabaseClient";
+import { fetchAllSupabaseRows } from "@/utils/fetchAllSupabaseRows";
 import { useAuth } from "@/context/AuthContextProvider";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -139,12 +140,16 @@ export default function MovementsConfig() {
       { data: usdtRateData, error: usdtRateError },
       { data: variantsData, error: variantsError },
     ] = await Promise.all([
-      supabase
-        .from("accounts")
-        .select(
-          "id, name, currency, initial_balance, include_in_balance, is_reference_capital"
-        )
-        .order("name", { ascending: true }),
+      fetchAllSupabaseRows((from, to) =>
+        supabase
+          .from("accounts")
+          .select(
+            "id, name, currency, initial_balance, include_in_balance, is_reference_capital"
+          )
+          .order("name", { ascending: true })
+          .order("id", { ascending: true })
+          .range(from, to),
+      ).then((rows) => ({ data: rows, error: null })).catch((loadError) => ({ data: null, error: loadError })),
       supabase
         .from("fx_rates")
         .select("rate")
@@ -200,54 +205,57 @@ export default function MovementsConfig() {
   }, []);
 
   const loadBalancesAll = useCallback(async () => {
-    const { data, error } = await supabase
-      .from("account_movements")
-      .select("account_id, type, amount, accreditation_status, available_on");
-
-    if (error) {
+    try {
+      const data = await fetchAllSupabaseRows((from, to) =>
+        supabase
+          .from("account_movements")
+          .select("account_id, type, amount, accreditation_status, available_on")
+          .order("id", { ascending: true })
+          .range(from, to),
+      );
+      setBalanceMovementsAll(data);
+    } catch (error) {
       toast.error("No se pudo cargar el balance", {
         description: error.message,
       });
-      return;
     }
-
-    setBalanceMovementsAll(data || []);
   }, []);
 
   const loadBalancesFiltered = useCallback(async () => {
-    let query = supabase
-      .from("account_movements")
-      .select("account_id, type, amount, accreditation_status, available_on");
+    try {
+      const data = await fetchAllSupabaseRows((from, to) => {
+        let query = supabase
+          .from("account_movements")
+          .select("account_id, type, amount, accreditation_status, available_on");
 
-    if (filters.accountId !== "all") {
-      query = query.eq("account_id", filters.accountId);
-    }
-    if (filters.type !== "all") {
-      query = query.eq("type", filters.type);
-    }
-    if (dateRange?.from) {
-      query = query.gte(
-        "movement_date",
-        dateRange.from.toISOString().slice(0, 10),
-      );
-    }
-    if (dateRange?.to) {
-      query = query.lte(
-        "movement_date",
-        dateRange.to.toISOString().slice(0, 10),
-      );
-    }
+        if (filters.accountId !== "all") {
+          query = query.eq("account_id", filters.accountId);
+        }
+        if (filters.type !== "all") {
+          query = query.eq("type", filters.type);
+        }
+        if (dateRange?.from) {
+          query = query.gte(
+            "movement_date",
+            dateRange.from.toISOString().slice(0, 10),
+          );
+        }
+        if (dateRange?.to) {
+          query = query.lte(
+            "movement_date",
+            dateRange.to.toISOString().slice(0, 10),
+          );
+        }
 
-    const { data, error } = await query;
+        return query.order("id", { ascending: true }).range(from, to);
+      });
 
-    if (error) {
+      setBalanceMovementsFiltered(data);
+    } catch (error) {
       toast.error("No se pudo cargar el balance filtrado", {
         description: error.message,
       });
-      return;
     }
-
-    setBalanceMovementsFiltered(data || []);
   }, [filters, dateRange]);
 
   const loadMovements = useCallback(async () => {
@@ -324,40 +332,41 @@ export default function MovementsConfig() {
   const loadCharts = useCallback(async () => {
     setChartsLoading(true);
 
-    let query = supabase
-      .from("account_movements")
-      .select("id, type, amount, currency, related_table, related_id, notes");
+    let movementsData;
+    try {
+      movementsData = await fetchAllSupabaseRows((from, to) => {
+        let query = supabase
+          .from("account_movements")
+          .select("id, type, amount, currency, related_table, related_id, notes");
 
-    if (filters.accountId !== "all") {
-      query = query.eq("account_id", filters.accountId);
-    }
-    if (filters.type !== "all") {
-      query = query.eq("type", filters.type);
-    }
-    if (dateRange?.from) {
-      query = query.gte(
-        "movement_date",
-        dateRange.from.toISOString().slice(0, 10),
-      );
-    }
-    if (dateRange?.to) {
-      query = query.lte(
-        "movement_date",
-        dateRange.to.toISOString().slice(0, 10),
-      );
-    }
+        if (filters.accountId !== "all") {
+          query = query.eq("account_id", filters.accountId);
+        }
+        if (filters.type !== "all") {
+          query = query.eq("type", filters.type);
+        }
+        if (dateRange?.from) {
+          query = query.gte(
+            "movement_date",
+            dateRange.from.toISOString().slice(0, 10),
+          );
+        }
+        if (dateRange?.to) {
+          query = query.lte(
+            "movement_date",
+            dateRange.to.toISOString().slice(0, 10),
+          );
+        }
 
-    const { data, error } = await query;
-
-    if (error) {
+        return query.order("id", { ascending: true }).range(from, to);
+      });
+    } catch (error) {
       toast.error("No se pudieron cargar los graficos", {
         description: error.message,
       });
       setChartsLoading(false);
       return;
     }
-
-    const movementsData = data || [];
     const expenseIds = movementsData
       .filter((m) => m.related_table === "expenses" && m.related_id)
       .map((m) => m.related_id);
